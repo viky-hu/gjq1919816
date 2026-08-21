@@ -1,0 +1,672 @@
+/* ========== Window 1 · SVG Login Page ========== */
+
+.login-placeholder-page {
+  --w1-surface: #F2F1EB;
+  --w1-accent: #4b4df3;
+  --w1-band: #4130f4;
+  --w1-brand: #4130f4;
+  --w1-title: #111111;
+  --w1-inverted-title: #F6F6F4;
+  --w1-copy: #9AA1AF;
+  --w1-micro: rgba(17, 17, 17, 0.5);
+  --w1-rule: rgba(17, 17, 17, 0.28);
+  --w1-font-family: "DingTalk JinBuTi", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  isolation: isolate;
+  background: var(--w1-surface);
+  font-family: var(--w1-font-family);
+}
+
+.login-placeholder-page,
+.login-placeholder-page *,
+.login-placeholder-page *::before,
+.login-placeholder-page *::after {
+  font-family: var(--w1-font-family) !important;
+}
+
+.login-hover-band-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.login-placeholder-top-rule {
+  stroke: var(--w1-rule);
+  stroke-width: 0.3;
+  shape-rendering: crispEdges;
+  vector-effect: non-scaling-stroke;
+}
+
+.login-placeholder-top-rule.is-inverted {
+  stroke: var(--w1-inverted-title);
+}
+
+.login-brand-mark {
+  fill: var(--w1-brand);
+}
+
+.login-brand-mark.is-inverted {
+  fill: var(--w1-inverted-title);
+}
+
+.login-brand-mark-word {
+  font-size: clamp(28px, 1.9vw, 36px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  dominant-baseline: alphabetic;
+  text-rendering: geometricPrecision;
+}
+
+.login-system-title {
+  fill: var(--w1-title);
+}
+
+.login-system-title.is-inverted {
+  fill: var(--w1-inverted-title);
+}
+
+.login-system-title-line {
+  font-size: 80px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  dominant-baseline: alphabetic;
+  text-rendering: geometricPrecision;
+}
+
+.login-support-copy {
+  fill: var(--w1-copy);
+}
+
+.login-support-copy.is-inverted {
+  fill: var(--w1-inverted-title);
+}
+
+.login-support-copy-line {
+  font-size: clamp(15px, 0.98vw, 18px);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  dominant-baseline: alphabetic;
+  text-rendering: geometricPrecision;
+}
+
+.login-micro-copy {
+  fill: var(--w1-micro);
+}
+
+.login-micro-copy.is-inverted {
+  fill: var(--w1-inverted-title);
+}
+
+.login-micro-copy-line {
+  font-size: clamp(11px, 0.72vw, 13px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  dominant-baseline: alphabetic;
+  text-rendering: geometricPrecision;
+}
+
+.login-cta-title {
+  fill: var(--w1-title);
+}
+
+.login-cta-title.is-inverted {
+  fill: var(--w1-inverted-title);
+}
+
+.login-cta-line,
+.login-cta-bracket {
+  font-weight: 700;
+  text-rendering: geometricPrecision;
+  dominant-baseline: alphabetic;
+}
+
+.login-cta-line {
+  font-size: 46px;
+  letter-spacing: 0;
+  text-anchor: middle;
+}
+
+.login-cta-bracket {
+  fill: var(--w1-accent);
+  font-size: 46px;
+  text-anchor: middle;
+}
+
+.login-cta-title.is-inverted .login-cta-bracket {
+  fill: #AEA7F4;
+}
+
+.login-hover-band {
+  fill: var(--w1-band);
+  shape-rendering: crispEdges;
+}
+
+.login-panel-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background:
+    linear-gradient(180deg, rgba(246, 246, 244, 0.16), rgba(246, 246, 244, 0.22)),
+    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.16), transparent 52%);
+  -webkit-backdrop-filter: brightness(1.02) contrast(0.82) saturate(0.88) grayscale(12%);
+  backdrop-filter: brightness(1.02) contrast(0.82) saturate(0.88) grayscale(12%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.login-panel-shell {
+  position: absolute;
+  top: 0;
+  left: var(--login-panel-left, 50vw);
+  width: var(--login-panel-width, 1px);
+  height: var(--login-panel-height, 100vh);
+  z-index: 6;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  background: var(--w1-band);
+}
+
+.login-placeholder-page[data-panel-stage="opening"] .login-panel-shell,
+.login-placeholder-page[data-panel-stage="open"] .login-panel-shell,
+.login-placeholder-page[data-panel-stage="closing"] .login-panel-shell {
+  pointer-events: auto;
+}
+
+.login-placeholder-page[data-panel-stage="idle"] .login-panel-dim,
+.login-placeholder-page[data-panel-stage="idle"] .login-panel-shell,
+.login-placeholder-page[data-panel-stage="idle"] .login-panel-form-wrap {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+.login-placeholder-page[data-panel-stage="idle"] .login-panel-form-wrap {
+  transform: translateY(18px) !important;
+}
+
+.login-panel-text {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  padding: clamp(28px, 2.4vw, 46px) clamp(22px, 2vw, 38px);
+  color: var(--w1-inverted-title);
+}
+
+.login-panel-form-wrap {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-panel-form-wrap .svg-login-form {
+  width: min(340px, 100%);
+  margin: 0 auto;
+}
+
+.login-placeholder-hitarea {
+  position: absolute;
+  z-index: 7;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.login-placeholder-hitarea:focus-visible {
+  outline: none;
+}
+
+.login-placeholder-page[data-panel-stage="idle"] .login-placeholder-hitarea {
+  pointer-events: auto;
+}
+
+@media (max-width: 720px) {
+  .login-brand-mark-word {
+    font-size: 22px;
+  }
+
+  .login-system-title-line {
+    font-size: 52px;
+  }
+
+  .login-support-copy-line {
+    font-size: 13px;
+  }
+
+  .login-micro-copy-line {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+  }
+
+  .login-cta-line,
+  .login-cta-bracket {
+    font-size: 36px;
+  }
+
+  .login-panel-text {
+    padding: 28px 22px;
+  }
+}
+
+.login-svg-page {
+  --w1-font-family: "DingTalk JinBuTi", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  position: relative;
+  isolation: isolate;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #ffffff;
+  font-family: var(--w1-font-family);
+}
+
+.login-svg-page,
+.login-svg-page *,
+.login-svg-page *::before,
+.login-svg-page *::after {
+  font-family: var(--w1-font-family) !important;
+}
+
+.login-beams-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.17;
+  filter: saturate(0.9) contrast(0.98) brightness(1.01);
+}
+
+.beams-background-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.login-svg-canvas {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* foreignObject content inside SVG */
+.svg-text-content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding: clamp(14px, 1.1vw, 20px);
+  box-sizing: border-box;
+  font-family: "DingTalk JinBuTi", system-ui, sans-serif;
+}
+
+/* ========== Intro (Stage 1) ========== */
+
+.svg-intro {
+  color: #3152f4;
+}
+
+.svg-headline {
+  margin: 0;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: clamp(10px, 1.1vw, 20px);
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  max-width: none;
+  color: #3152f4;
+}
+
+.svg-headline-main {
+  display: block;
+  font-size: clamp(40px, 2.25vw, 72px);
+  line-height: 1.1;
+}
+
+.svg-headline-sub {
+  display: block;
+  font-size: clamp(22px, 1.22vw, 34px);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.svg-text-content.is-inverted .svg-headline {
+  color: #ffffff;
+}
+
+/* ========== Login Form (Stage 2) ========== */
+
+.svg-login-form {
+  width: min(320px, 100%);
+  margin: auto;
+  position: relative;
+  color: #ffffff;
+}
+
+.svg-form-switcher {
+  position: relative;
+  min-height: 19.5rem;
+}
+
+.svg-form-panel {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  gap: 1.1rem;
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 0.34s ease, transform 0.34s ease;
+}
+
+.svg-form-panel.is-active {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.svg-form-panel.is-inactive {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+.svg-field {
+  position: relative;
+}
+
+.svg-field input {
+  width: 100%;
+  height: 2.35rem;
+  padding: 0 0 0.35rem;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.34);
+  background: transparent;
+  color: #ffffff;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.svg-field input::placeholder {
+  color: transparent;
+}
+
+.svg-field input:focus {
+  border-bottom-color: #ffffff;
+}
+
+.svg-field label {
+  position: absolute;
+  left: 0;
+  top: 0.28rem;
+  font-size: 1.08rem;
+  font-weight: 600;
+  color: #ffffff;
+  pointer-events: none;
+  transition: transform 0.2s, font-size 0.2s, color 0.2s;
+}
+
+.svg-field input:focus ~ label,
+.svg-field input:not(:placeholder-shown) ~ label {
+  transform: translateY(-1.7rem) scale(0.84);
+  color: #ffffff;
+}
+
+.svg-field-pwd {
+  padding-right: 3.5rem;
+}
+
+.svg-toggle-pwd {
+  position: absolute;
+  right: 0;
+  top: 0.45rem;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+  padding: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.svg-toggle-pwd:hover {
+  color: #ffffff;
+}
+
+.svg-eye-icon {
+  width: 1rem;
+  height: 1rem;
+  display: inline-flex;
+}
+
+.svg-eye-icon-svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.svg-eye-icon-svg path,
+.svg-eye-icon-svg circle,
+.svg-eye-icon-svg line {
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.svg-eye-icon-svg circle {
+  fill: currentColor;
+  fill-opacity: 0.2;
+}
+
+.svg-eye-icon-slash {
+  opacity: 1;
+  transition: opacity 0.18s ease;
+}
+
+.svg-eye-icon-slash.is-hidden {
+  opacity: 0;
+}
+
+.svg-form-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+  color: #ffffff;
+}
+
+.svg-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.svg-checkbox input {
+  accent-color: #ffffff;
+}
+
+.svg-login-form a {
+  color: #ffffff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.svg-form-actions {
+  display: grid;
+  gap: 0.7rem;
+  justify-items: center;
+}
+
+.svg-register {
+  margin: 0.35rem 0 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+  color: #ffffff;
+}
+
+.svg-register-copy {
+  color: #ffffff;
+}
+
+.svg-primary-action-slot {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.25rem;
+}
+
+.svg-bracket-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.42rem;
+  width: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #ffffff;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+  transition: opacity 0.18s ease;
+}
+
+.svg-bracket-action:disabled {
+  opacity: 0.58;
+  cursor: default;
+}
+
+.svg-bracket-action:focus-visible {
+  outline: none;
+}
+
+.svg-bracket-action-mark,
+.svg-bracket-action-label {
+  transition: color 0.18s ease, transform 0.18s ease;
+}
+
+.svg-bracket-action-mark {
+  color: #AEA7F4;
+}
+
+.svg-bracket-action-label {
+  color: #ffffff;
+}
+
+.svg-bracket-action-mark {
+  font-size: 1.22em;
+  font-weight: 700;
+}
+
+.svg-bracket-action-label {
+  font-size: inherit;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.svg-bracket-action:not(:disabled):hover .svg-bracket-action-mark,
+.svg-bracket-action:focus-visible .svg-bracket-action-mark {
+  color: #ffffff;
+}
+
+.svg-bracket-action:not(:disabled):hover .svg-bracket-action-mark:first-child,
+.svg-bracket-action:focus-visible .svg-bracket-action-mark:first-child {
+  transform: translateX(-5px);
+}
+
+.svg-bracket-action:not(:disabled):hover .svg-bracket-action-mark:last-child,
+.svg-bracket-action:focus-visible .svg-bracket-action-mark:last-child {
+  transform: translateX(5px);
+}
+
+.svg-bracket-action--primary {
+  min-width: 196px;
+  max-width: 196px;
+  font-size: 1.18rem;
+  transform: translateX(-16px);
+}
+
+.svg-bracket-action--secondary {
+  min-width: 196px;
+  max-width: 196px;
+  font-size: 1.04rem;
+  opacity: 0.92;
+  transform: translateX(-16px);
+}
+
+.svg-bracket-action--small {
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.svg-inline-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #ffffff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.svg-inline-link:hover {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.svg-inline-link:focus-visible {
+  outline: none;
+}
+
+.svg-form-error {
+  margin: -0.1rem 0 0.3rem;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.42);
+  color: #ffc2c2;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.svg-form-pending {
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.svg-scroll-hint {
+  fill: #3152f4;
+  font-size: 23px;
+  letter-spacing: -0.08em;
+  font-weight: 600;
+  user-select: none;
+  font-family: "Michroma", system-ui, sans-serif;
+}
