@@ -25,7 +25,7 @@ _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root))
 
 from api.database import Base, SessionLocal, engine
-from api.routers import admin, auth, chat_history, clusters, crypto, documents, macro, nodes, query
+from api.routers import admin, auth, chat_history, clusters, crypto, documents, graph, macro, nodes, query
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("api")
@@ -47,7 +47,8 @@ async def lifespan(app: FastAPI):
 
     # 自动迁移：给旧表添加缺失的列
     import sqlite3
-    db_path = "./mia_rag_storage/api.db"
+    from api.database import _DB_DIR
+    db_path = str(_DB_DIR / "api.db")
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -123,11 +124,10 @@ async def lifespan(app: FastAPI):
     from mia_emb import MiAConfig
     from mia_emb.rag_manager import MiARAGManager
 
-    config = MiAConfig(
-        model_path=MODEL_PATH,
-        base_model_path=BASE_MODEL_PATH,
-        deepseek_api_key=DEEPSEEK_API_KEY,
-    )
+    cfg_kwargs: dict = dict(model_path=MODEL_PATH, base_model_path=BASE_MODEL_PATH)
+    if DEEPSEEK_API_KEY:
+        cfg_kwargs["deepseek_api_key"] = DEEPSEEK_API_KEY
+    config = MiAConfig(**cfg_kwargs)
 
     manager = MiARAGManager(config=config, base_dir="./mia_rag_storage")
     await manager.initialize(lang="zh")
@@ -138,12 +138,12 @@ async def lifespan(app: FastAPI):
         from api.models import Document, ClusterFile, Cluster, User
         from collections import defaultdict
 
-        # Group documents by user_id
+        # Group documents by user_id (with file names for chunk-to-file mapping)
         ready_docs = db.query(Document).filter(Document.status == "ready").all()
-        user_docs: dict[int, list[str]] = defaultdict(list)
+        user_docs: dict[int, list[tuple[str, str]]] = defaultdict(list)
         for d in ready_docs:
             if d.content and d.user_id:
-                user_docs[d.user_id].append(d.content)
+                user_docs[d.user_id].append((d.content, d.filename or ""))
 
         # Group cluster files by owner (via Cluster.user_id)
         cluster_files = (
@@ -157,21 +157,42 @@ async def lifespan(app: FastAPI):
                 # Get the cluster owner
                 cluster = db.query(Cluster).filter(Cluster.id == cf.cluster_id).first()
                 if cluster and cluster.user_id:
-                    user_docs[cluster.user_id].append(cf.content)
+                    user_docs[cluster.user_id].append((cf.content, cf.filename or ""))
 
-        # Load documents into each user's RAG
+        # Load documents into each user's RAG (skip if already loaded)
         total_loaded = 0
-        for user_id, contents in user_docs.items():
-            if contents:
+        for user_id, doc_entries in user_docs.items():
+            if doc_entries:
+                contents = [e[0] for e in doc_entries]
+                file_names = [e[1] for e in doc_entries]
                 logger.info(f"Loading {len(contents)} documents for user {user_id}...")
                 user_rag = await manager.get_user_rag(user_id)
-                await user_rag.insert_documents(contents)
-                total_loaded += len(contents)
+                # Use incremental insertion to skip already-inserted documents
+                stats = await user_rag.insert_documents_incremental(contents, file_names=file_names)
+                total_loaded += stats.get("new", 0)
+                logger.info(f"  User {user_id}: {stats}")
+
+        # Also create RAG instances for approved users without documents
+        all_users = db.query(User).filter(User.status == "approved").all()
+        for u in all_users:
+            if u.id not in manager._user_rags:
+                try:
+                    await manager.get_user_rag(u.id)
+                    logger.info(f"Created empty RAG instance for user {u.id} ({u.username})")
+                except Exception as e:
+                    logger.warning(f"Failed to create RAG for user {u.id}: {e}")
+
+        # Persist all graphs to disk (ensures GraphML files exist for visualization)
+        for uid, rag_instance in manager._user_rags.items():
+            try:
+                await rag_instance.persist_graph()
+            except Exception as e:
+                logger.debug(f"Graph persist for user {uid}: {e}")
 
         if total_loaded:
-            logger.info(f"Loaded {total_loaded} total documents across {len(user_docs)} users")
+            logger.info(f"Loaded {total_loaded} new documents across {len(user_docs)} users")
         else:
-            logger.info("No documents found in database")
+            logger.info("No new documents to load (all already inserted)")
     finally:
         db.close()
 
@@ -209,6 +230,7 @@ app.include_router(chat_history.router)
 app.include_router(clusters.router)
 app.include_router(crypto.router)
 app.include_router(documents.router)
+app.include_router(graph.router)
 app.include_router(macro.router)
 app.include_router(query.router)
 app.include_router(nodes.router)

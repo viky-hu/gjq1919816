@@ -36,3 +36,8 @@ python-louvain>=0.16
 
 # SM4 encryption (for federation)
 sm4
+
+# Multimodal document processing
+PyMuPDF>=1.24.0
+Pillow>=10.0.0
+pytesseract>=0.3.10

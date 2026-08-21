@@ -76,14 +76,16 @@ def _build_entity_extraction_prompt(lang: str = "zh") -> tuple[str, list[str]]:
             "你是一个中文法律领域的实体和关系抽取专家。\n\n"
             "---Rules---\n"
             "1. Entity format: entity{{tuple_delimiter}}entity_name{{tuple_delimiter}}entity_type{{tuple_delimiter}}entity_description\n"
-            "   - entity_name: 必须使用原文中的中文文本\n"
-            "   - entity_type: 只能是 [{types}] 之一（必须小写）\n"
-            "   - entity_description: 该实体的简要描述\n"
+            "   - entity_name: 必须使用中文——如果是外文人名，音译为中文（如 ZhangWei 写为 张伟）\n"
+            "   - entity_type: 必须使用 [{types}] 中的值，保持英文小写，绝对不能翻译\n"
+            "   - entity_description: 用中文简要描述（一句话）\n"
             "2. Relationship format: relation{{tuple_delimiter}}source{{tuple_delimiter}}target{{tuple_delimiter}}type{{tuple_delimiter}}description\n"
-            "3. Source 和 target 的 entity_name 必须与 entity 列表中的完全一致。\n"
-            "4. 只输出 entity 和 relation 行。不要输出引言、解释或 markdown。\n"
-            "5. 以 {{completion_delimiter}} 结束。\n"
-            "6. CRITICAL: entity_type 必须为小写。"
+            "   - source / target: entity_name 必须与实体列表完全一致\n"
+            "   - type: 关系的类型，用中文\n"
+            "   - description: 用中文简要描述关系（一句话）\n"
+            "3. 只输出 entity 和 relation 行。不要输出引言、解释或 markdown。\n"
+            "4. 以 {{completion_delimiter}} 结束。\n"
+            "5. CRITICAL: entity_type 永远是英文小写，类型列表: [{types}]。entity_name 用中文，description 用中文。"
         ).format(types=types_str)
         examples = [_ZH_EXAMPLE_1, _ZH_EXAMPLE_2]
     return system, examples
@@ -190,6 +192,8 @@ class MiARAG:
         self._query_context: bool = False
         self._use_mia: bool = True
         self._saved_prompts: dict = {}
+        self._chunk_file_map: dict[str, str] = {}  # content_prefix -> file_name
+        self._chunk_id_to_file: dict[str, str] = {}  # chunk_id -> file_name
 
     # ── Lifecycle ─────────────────────────────────────────────────
 
@@ -214,6 +218,9 @@ class MiARAG:
         logger.info("LightRAG initialized")
 
         self._load_mindscape()
+        self._chunk_file_map = self._load_chunk_file_map()
+        logger.info(f"Loaded {len(self._chunk_file_map)} chunk-to-file mappings")
+        await self._build_chunk_id_to_file_map()
 
     async def close(self):
         """Finalize storages and restore global state."""
@@ -221,9 +228,24 @@ class MiARAG:
             await self.rag.finalize_storages()
         self._restore_prompts()
 
+    async def persist_graph(self):
+        """Persist the chunk_entity_relation_graph to disk (GraphML).
+
+        LightRAG's BaseGraphStorage.finalize() is a no-op; the graph only
+        flushes via index_done_callback.  Call this after document insertion
+        so the GraphML file is available for visualization.
+        """
+        if not self.rag:
+            return
+        try:
+            await self.rag.chunk_entity_relation_graph.index_done_callback()
+            logger.info("Persisted chunk_entity_relation_graph to disk")
+        except Exception as e:
+            logger.warning(f"Failed to persist graph: {e}")
+
     # ── Document Ingestion ────────────────────────────────────────
 
-    async def insert_documents(self, documents: list[str]):
+    async def insert_documents(self, documents: list[str], file_names: list[str] | None = None):
         """Build mindscape and insert text documents into LightRAG.
 
         Call once after initialize(), before any query().
@@ -234,6 +256,13 @@ class MiARAG:
             logger.warning("LightRAG not available, skipping document insertion")
             return
 
+        # Register chunk-to-file mapping if file names provided
+        if file_names:
+            for doc, fname in zip(documents, file_names):
+                self._register_chunk_file_mapping(doc, fname)
+            self._save_chunk_file_map()
+            logger.info(f"Registered {len(documents)} chunk-to-file mappings")
+
         logger.info(f"Inserting {len(documents)} documents...")
         self._query_context = False
         for i, doc in enumerate(documents):
@@ -241,8 +270,11 @@ class MiARAG:
             if (i + 1) % 5 == 0:
                 logger.info(f"  [{i+1}/{len(documents)}]")
         logger.info("Document insertion complete")
+        await self.persist_graph()
+        if self._chunk_file_map:
+            await self._build_chunk_id_to_file_map()
 
-    async def insert_documents_incremental(self, documents: list[str]) -> dict:
+    async def insert_documents_incremental(self, documents: list[str], file_names: list[str] | None = None) -> dict:
         """Incremental insertion with dedup and conflict resolution.
 
         - Tracks document hashes to skip already-inserted content
@@ -254,19 +286,42 @@ class MiARAG:
             return {"new": 0, "skipped": 0, "total": 0}
 
         doc_hashes = self._load_doc_hashes()
+
+        # Check if graph is empty (GraphML never persisted) — force re-insert if so
+        graph_is_empty = False
+        try:
+            graph = self.rag.chunk_entity_relation_graph._graph
+            if graph is None or graph.number_of_nodes() == 0:
+                graph_is_empty = True
+        except Exception:
+            graph_is_empty = True
+
+        if graph_is_empty and doc_hashes:
+            logger.info("Graph is empty but hashes exist — clearing hashes to force re-insertion")
+            doc_hashes = set()
+
         new_docs = []
+        new_file_names = []
         skipped = 0
 
-        for doc in documents:
+        for i, doc in enumerate(documents):
             h = self._compute_doc_hash(doc)
             if h in doc_hashes:
                 skipped += 1
                 continue
             new_docs.append((h, doc))
+            if file_names and i < len(file_names):
+                new_file_names.append(file_names[i])
 
         if not new_docs:
             logger.info(f"All {len(documents)} documents already inserted, skipping")
             return {"new": 0, "skipped": skipped, "total": len(documents)}
+
+        # Register chunk-to-file mapping for new documents
+        if new_file_names:
+            for (h, doc), fname in zip(new_docs, new_file_names):
+                self._register_chunk_file_mapping(doc, fname)
+            self._save_chunk_file_map()
 
         logger.info(f"Incremental: {len(new_docs)} new, {skipped} skipped")
         self._query_context = False
@@ -278,6 +333,10 @@ class MiARAG:
 
         self._save_doc_hashes(doc_hashes)
         logger.info(f"Incremental insertion complete: {len(new_docs)} new documents")
+        if new_docs:
+            await self.persist_graph()
+        if new_file_names:
+            await self._build_chunk_id_to_file_map()
         return {"new": len(new_docs), "skipped": skipped, "total": len(documents)}
 
     async def update_entity(self, entity_name: str, new_description: str, new_confidence: float):
@@ -326,6 +385,101 @@ class MiARAG:
 
     # ── Incremental Helpers ─────────────────────────────────────
 
+    def _load_chunk_file_map(self) -> dict[str, str]:
+        """Load chunk-to-file mapping from disk."""
+        map_file = Path(self.working_dir) / "chunk_file_map.json"
+        if map_file.exists():
+            try:
+                with open(map_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # Load chunk-id-to-file map if present (new format)
+                if "_chunk_id_to_file" in data:
+                    self._chunk_id_to_file = data.pop("_chunk_id_to_file")
+                return data
+            except Exception:
+                pass
+        return {}
+
+    def _save_chunk_file_map(self):
+        """Save chunk-to-file mapping to disk."""
+        map_file = Path(self.working_dir) / "chunk_file_map.json"
+        map_file.parent.mkdir(parents=True, exist_ok=True)
+        data = {**self._chunk_file_map, "_chunk_id_to_file": self._chunk_id_to_file}
+        with open(map_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def _register_chunk_file_mapping(self, content: str, file_name: str):
+        """Register a mapping from content prefix to file name."""
+        # Use first 100 chars as key for matching
+        prefix = content[:100].strip()
+        if prefix:
+            self._chunk_file_map[prefix] = file_name
+
+    async def _build_chunk_id_to_file_map(self):
+        """Build chunk_id -> file_name mapping by querying LightRAG's chunk vector DB.
+
+        Uses sample queries to discover chunk IDs, then matches stored content
+        against the content_prefix map to establish chunk_id -> file_name.
+        """
+        if not self.rag or not self._chunk_file_map:
+            return
+        try:
+            lr = self.rag
+            # Use a few sample queries from the content map to discover chunk IDs
+            sample_queries = list(self._chunk_file_map.keys())[:5]
+            for query_text in sample_queries:
+                try:
+                    results = await lr.chunks_vdb.query(query=query_text, top_k=20)
+                except Exception:
+                    continue
+                if not results:
+                    continue
+                chunk_ids = [r["id"] for r in results]
+                chunk_data = await lr.text_chunks.get_by_ids(chunk_ids)
+                for cid, cdata in zip(chunk_ids, chunk_data):
+                    if not cdata or not isinstance(cdata, dict):
+                        continue
+                    content = cdata.get("content", "")
+                    if isinstance(content, list):
+                        content = " ".join(str(t) for t in content)
+                    if not content:
+                        continue
+                    # Match against content_prefix map
+                    prefix = content[:100].strip()
+                    if prefix in self._chunk_file_map:
+                        self._chunk_id_to_file[cid] = self._chunk_file_map[prefix]
+                    else:
+                        for key, fname in self._chunk_file_map.items():
+                            if key[:50] in content or content[:50] in key:
+                                self._chunk_id_to_file[cid] = fname
+                                break
+            if self._chunk_id_to_file:
+                self._save_chunk_file_map()
+                logger.info(f"Built chunk_id-to-file map: {len(self._chunk_id_to_file)} entries")
+        except Exception as e:
+            logger.debug(f"Could not build chunk_id_to_file map: {e}")
+
+    def lookup_file_name(self, chunk_content: str, chunk_id: str = "") -> str:
+        """Look up the original file name from chunk content or chunk ID."""
+        if not self._chunk_file_map:
+            self._chunk_file_map = self._load_chunk_file_map()
+
+        # Strategy 1: chunk ID direct lookup (fastest, most reliable)
+        if chunk_id and chunk_id in self._chunk_id_to_file:
+            return self._chunk_id_to_file[chunk_id]
+
+        # Strategy 2: exact content prefix match
+        prefix = chunk_content[:100].strip()
+        if prefix in self._chunk_file_map:
+            return self._chunk_file_map[prefix]
+
+        # Strategy 3: partial content match (lenient: 30-char prefix)
+        for key, file_name in self._chunk_file_map.items():
+            if key[:30] in chunk_content or chunk_content[:30] in key:
+                return file_name
+
+        return ""
+
     @staticmethod
     def _compute_doc_hash(text: str) -> str:
         """Compute hash of document content for dedup."""
@@ -367,59 +521,93 @@ class MiARAG:
         pdf_proc = PDFProcessor(image_processor=image_proc)
 
         text_docs = []
+        text_doc_sources = []  # Track file name for each doc
         image_count = 0
         pdf_count = 0
+        errors = []
 
         for fpath in file_paths:
             p = Path(fpath)
             if not p.exists():
                 logger.warning(f"File not found: {fpath}")
+                errors.append(f"文件不存在: {fpath}")
                 continue
 
             ext = p.suffix.lower()
+            file_name = p.name  # Get original file name
 
             if ext == ".txt":
                 text = self._read_text_file(fpath)
                 if text:
                     text_docs.append(text)
+                    text_doc_sources.append(file_name)
 
             elif ext == ".pdf":
                 try:
                     result = pdf_proc.process_file(fpath)
                     for chunk in result.chunks:
                         text_docs.append(chunk.content)
+                        text_doc_sources.append(file_name)
                     pdf_count += 1
                     logger.info(f"  PDF: {p.name} → {len(result.chunks)} chunks")
+                except ImportError as e:
+                    logger.error(f"PDF processing failed (missing dependency): {p.name}: {e}")
+                    errors.append(f"PDF处理依赖缺失: {e}")
                 except Exception as e:
                     logger.error(f"PDF processing failed: {p.name}: {e}")
+                    errors.append(f"PDF处理失败: {e}")
 
             elif ext in (".png", ".jpg", ".jpeg", ".bmp", ".tiff"):
                 try:
                     result = image_proc.process_file(fpath)
                     if result.description:
                         text_docs.append(result.description)
+                        text_doc_sources.append(file_name)
                     image_count += 1
                     logger.info(f"  Image: {p.name} → {len(result.description)} chars")
+                except ImportError as e:
+                    logger.error(f"Image processing failed (missing dependency): {p.name}: {e}")
+                    errors.append(f"图片处理依赖缺失: {e}")
                 except Exception as e:
                     logger.error(f"Image processing failed: {p.name}: {e}")
+                    errors.append(f"图片处理失败: {e}")
 
             else:
                 logger.warning(f"Unsupported file type: {ext} ({p.name})")
+                errors.append(f"不支持的文件类型: {ext}")
+
+        if errors and not text_docs:
+            raise RuntimeError("; ".join(errors))
 
         logger.info(f"Processed: {len(text_docs)} text chunks from {pdf_count} PDFs, {image_count} images")
+
+        # Register chunk-to-file mapping
+        for doc, source in zip(text_docs, text_doc_sources):
+            self._register_chunk_file_mapping(doc, source)
+        self._save_chunk_file_map()
+        logger.info(f"Registered {len(text_docs)} chunk-to-file mappings")
 
         # Build mindscape from all text content
         if text_docs:
             await self._build_mindscape(text_docs)
 
         # Insert all text into LightRAG
-        logger.info(f"Inserting {len(text_docs)} chunks into KG...")
+        # Always clear doc_status before insertion to avoid stale duplicate detection
+        # This does NOT affect existing graph entities — only resets the "already processed" flag
+        try:
+            await self.rag.doc_status.drop()
+            logger.info("Cleared LightRAG doc_status for fresh insertion")
+        except Exception as e:
+            logger.debug(f"doc_status drop failed: {e}")
+
+        logger.info(f"Inserting {len(text_docs)} chunks into KG (batch)...")
         self._query_context = False
-        for i, doc in enumerate(text_docs):
-            await self.rag.ainsert(doc)
-            if (i + 1) % 10 == 0:
-                logger.info(f"  [{i+1}/{len(text_docs)}]")
+        # Batch insert all chunks in a single ainsert call to avoid concurrent pipeline conflicts
+        await self.rag.ainsert(text_docs)
         logger.info("Multi-modal insertion complete")
+        await self.persist_graph()
+        if text_docs:
+            await self._build_chunk_id_to_file_map()
 
     def _read_text_file(self, path: str) -> str:
         """Read text file with auto encoding detection."""
@@ -459,30 +647,56 @@ class MiARAG:
         if not self.rag:
             return self._query_standalone(question)
 
-        if use_dual_channel and self.mindscape:
-            return await self._query_dual_channel(question)
+        # Dual-channel is only used for "mix" mode.
+        # For explicit local/global/hybrid/naive modes, fall through to
+        # plain LightRAG which has native per-mode logic.
+        if use_dual_channel and self.mindscape and mode == "mix":
+            return await self._query_dual_channel(question, mode=mode)
 
         from lightrag.base import QueryParam
 
         self._query_context = True
         try:
-            result = await self.rag.aquery(
+            # Use aquery_llm to get full structured result with raw_data
+            llm_result = await self.rag.aquery_llm(
                 question, param=QueryParam(mode=mode, top_k=top_k, chunk_top_k=chunk_top_k)
             )
         finally:
             self._query_context = False
 
-        if result is None:
+        if llm_result is None:
             answer, raw_data = "", {}
-        elif isinstance(result, str):
-            answer, raw_data = result, {}
+        elif isinstance(llm_result, str):
+            answer, raw_data = llm_result, {}
         else:
-            answer = getattr(result, "content", "") or ""
-            raw_data = getattr(result, "raw_data", {}) or {}
+            llm_response = llm_result.get("llm_response", {})
+            answer = llm_response.get("content", "") or ""
+            raw_data = llm_result
+
+        # Build evidence from raw_data chunks for traceability
+        evidence = []
+        data_section = raw_data.get("data", {}) if isinstance(raw_data, dict) else {}
+        for chunk in data_section.get("chunks", [])[:5]:
+            if isinstance(chunk, dict) and chunk.get("content"):
+                evidence.append({
+                    "source": chunk.get("file_path", chunk.get("source_id", "unknown")),
+                    "content": str(chunk.get("content", ""))[:500],
+                    "relevance": float(chunk.get("score", 0.0)),
+                })
+        # Also extract from entities if chunks are empty
+        if not evidence:
+            for entity in data_section.get("entities", [])[:5]:
+                if isinstance(entity, dict) and entity.get("description"):
+                    evidence.append({
+                        "source": entity.get("file_path", entity.get("source_id", "unknown")),
+                        "content": str(entity.get("description", ""))[:500],
+                        "relevance": 0.5,
+                    })
 
         return {
             "answer": answer,
             "context": raw_data,
+            "evidence": evidence,
             "metadata": {
                 "mode": mode,
                 "mindscape_used": bool(self.mindscape),
@@ -491,7 +705,7 @@ class MiARAG:
             },
         }
 
-    async def _query_dual_channel(self, question: str) -> dict:
+    async def _query_dual_channel(self, question: str, mode: str = "mix") -> dict:
         """Use DualChannelRetriever for fine+coarse two-pass retrieval."""
         from .dual_channel import DualChannelRetriever
 
@@ -507,7 +721,7 @@ class MiARAG:
                 "coarse_summary": result.coarse.subgraph_summary,
             },
             "evidence": [
-                {"source": e.source, "content": e.content, "score": e.relevance, "type": e.type, "name": e.name}
+                {"source": e.source, "content": e.content, "relevance": e.relevance, "type": e.type, "name": e.name}
                 for e in result.evidence
             ],
             "metadata": {
@@ -552,9 +766,16 @@ class MiARAG:
             return
 
         self._save_prompts(PROMPTS)
-        sys_prompt, examples = _build_entity_extraction_prompt(lang)
-        PROMPTS["entity_extraction_examples"] = examples
-        PROMPTS["entity_extraction_system_prompt"] = sys_prompt
+
+        # Map internal lang code to LightRAG language name
+        lang_name = "Chinese" if lang == "zh" else "English"
+
+        # Use LightRAG's original well-tested prompts with language + entity_types
+        # via addon_params, instead of custom prompts that DeepSeek can't follow.
+        addon_params = {
+            "language": lang_name,
+            "entity_types": _SHARED_ENTITY_TYPES,
+        }
 
         # Closures (not bound methods) — avoids deepcopy of GPU model in
         # LightRAG.__post_init__ -> asdict(self) -> deepcopy.
@@ -583,6 +804,7 @@ class MiARAG:
             working_dir=self.working_dir,
             llm_model_func=llm_func,
             embedding_func=embedding_func,
+            addon_params=addon_params,
         )
         await self.rag.initialize_storages()
 
@@ -602,13 +824,24 @@ class MiARAG:
                 timeout=httpx.Timeout(connect=60.0, read=180.0, write=60.0, pool=10.0),
                 max_retries=2,
             )
+            # Extract system_prompt from kwargs (LightRAG passes it during entity extraction)
+            system_prompt = kwargs.get("system_prompt")
             raw = args[0] if args else kwargs.get("messages", [])
             if isinstance(raw, str):
-                messages = [{"role": "user", "content": raw}]
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": raw})
             elif isinstance(raw, list):
                 messages = raw
             else:
-                messages = [{"role": "user", "content": str(raw)}]
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": str(raw)})
+
+            # Extract max_tokens if provided
+            max_tok = kwargs.get("max_tokens") or 2048
 
             for attempt in range(3):
                 try:
@@ -616,7 +849,7 @@ class MiARAG:
                         model=model,
                         messages=messages,
                         temperature=0.3,
-                        max_tokens=2048,
+                        max_tokens=max_tok,
                     )
                     return response.choices[0].message.content
                 except (APITimeoutError, APIConnectionError) as e:

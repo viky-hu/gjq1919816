@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..deps import create_access_token, get_current_user, get_db, hash_password, verify_password
-from ..models import User
+from ..models import Node, User
 from ..schemas import TokenResponse, UserLogin, UserRegister, UserResponse
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -42,7 +42,13 @@ def login(body: UserLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号注册已被拒绝")
 
     token = create_access_token(user.id, user.username)
-    return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
+    user_resp = UserResponse.model_validate(user)
+    # Look up node_type from Node table
+    if user.node_id:
+        node = db.query(Node).filter(Node.node_id == user.node_id).first()
+        if node:
+            user_resp.node_type = node.node_type
+    return TokenResponse(access_token=token, user=user_resp)
 
 
 @router.get("/me", response_model=UserResponse)

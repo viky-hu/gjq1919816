@@ -32,10 +32,10 @@ class MiAConfig:
     global_summary_max_tokens: int = 500
     summary_temperature: float = 0.1
 
-    # ── DeepSeek API ──
-    deepseek_model: str = "deepseek-chat"
-    deepseek_base_url: str = "https://api.deepseek.com/v1"
-    deepseek_api_key: str = ""
+    # ── LLM API (DashScope Qwen) ──
+    deepseek_model: str = "qwen-plus"
+    deepseek_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    deepseek_api_key: str = "REDACTED"
 
     # ── Retrieval ──
     top_k_chunks: int = 20

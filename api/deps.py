@@ -18,7 +18,7 @@ from .models import User
 
 # ── Config ───────────────────────────────────────────────────────
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "mia-rag-secret-change-in-production")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY") or secrets.token_hex(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 48
 

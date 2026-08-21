@@ -16,6 +16,12 @@ from typing import Optional
 
 import numpy as np
 
+from .graph_retrieval import (
+    HybridReranker,
+    LouvainDetector,
+    MindscapeGuidedDiffusion,
+)
+
 logger = logging.getLogger("dual_channel")
 
 
@@ -80,6 +86,7 @@ class DualChannelRetriever:
 
     def __init__(self, rag):
         self.rag = rag
+        self._last_ppr: dict = {}  # PPR scores cached from _build_subgraph for _rerank
 
     # ── Public API ─────────────────────────────────────────────────
 
@@ -190,42 +197,76 @@ class DualChannelRetriever:
 
     # ── Evidence Builder ─────────────────────────────────────────
 
+    @staticmethod
+    def _extract_source_label(content: str, chunk_id: str = "") -> str:
+        """Extract a human-readable source label from chunk content."""
+        import re
+        # Try to find law/article references
+        law_match = re.search(r'(《[^》]+》)', content)
+        article_match = re.search(r'(第[一二三四五六七八九十百千零\d]+[条章节款])', content)
+        if law_match and article_match:
+            return f"{law_match.group(1)}{article_match.group(1)}"
+        if law_match:
+            return law_match.group(1)
+        # Try to find a meaningful title from first sentence
+        first_line = content.split("。")[0][:30].strip()
+        if len(first_line) >= 4:
+            return first_line
+        # Fallback: use chunk type + index
+        if chunk_id:
+            return f"文献片段"
+        return "知识片段"
+
     def _build_evidence(
         self, fine: FineChannelResult, coarse: CoarseChannelResult
     ) -> list[EvidenceItem]:
         """Build structured evidence list from both channels for traceability."""
         evidence = []
 
-        # Fine channel: entities
-        for e in fine.entities[:10]:
-            evidence.append(EvidenceItem(
-                source="fine_entity",
-                content=e.get("description", "")[:500],
-                relevance=e.get("score", 0.0),
-                type="entity",
-                name=e.get("name", ""),
-            ))
+        try:
+            # Fine channel: entities
+            for e in fine.entities[:10]:
+                evidence.append(EvidenceItem(
+                    source=f"实体: {e.get('name', '')}",
+                    content=e.get("description", "")[:500],
+                    relevance=e.get("score", 0.0),
+                    type="entity",
+                    name=e.get("name", ""),
+                ))
 
-        # Fine channel: chunks
-        for c in fine.chunks[:5]:
-            evidence.append(EvidenceItem(
-                source="fine_chunk",
-                content=c.get("content", "")[:500],
-                relevance=c.get("score", 0.0),
-                type="chunk",
-                name=c.get("id", ""),
-            ))
+            # Fine channel: chunks - look up original file name
+            for c in fine.chunks[:5]:
+                content = c.get("content", "")
+                chunk_id = c.get("id", "")
+                # Try to find original file name from mapping
+                try:
+                    file_name = self.rag.lookup_file_name(content, chunk_id=chunk_id)
+                except Exception:
+                    file_name = ""
+                if file_name:
+                    label = file_name
+                else:
+                    label = self._extract_source_label(content, c.get("id", ""))
+                evidence.append(EvidenceItem(
+                    source=label,
+                    content=content[:500],
+                    relevance=c.get("score", 0.0),
+                    type="chunk",
+                    name=label,
+                ))
 
-        # Coarse channel: communities
-        for i, comm in enumerate(coarse.communities[:5]):
-            top_names = "、".join(comm.get("top_entities", [])[:5])
-            evidence.append(EvidenceItem(
-                source="coarse_community",
-                content=comm.get("summary", ""),
-                relevance=0.0,
-                type="community",
-                name=f"社区{i+1}({top_names})",
-            ))
+            # Coarse channel: communities
+            for i, comm in enumerate(coarse.communities[:5]):
+                top_names = "、".join(comm.get("top_entities", [])[:5])
+                evidence.append(EvidenceItem(
+                    source=f"知识社区: {top_names}",
+                    content=comm.get("summary", ""),
+                    relevance=0.0,
+                    type="community",
+                    name=f"社区{i+1}({top_names})",
+                ))
+        except Exception as e:
+            logger.warning(f"Error building evidence: {e}")
 
         return evidence
 
@@ -385,8 +426,55 @@ class DualChannelRetriever:
         seeds.sort(key=lambda x: x["score"], reverse=True)
         return seeds[:top_k]
 
-    async def _build_subgraph(self, seed_entities: list[dict]) -> dict:
-        """Expand seed entities to 1-hop neighbors, build local subgraph."""
+    async def _build_subgraph(self, seed_entities: list[dict], top_k: int = 50) -> dict:
+        """Build a relevance-weighted local subgraph via mindscape-guided PPR.
+
+        Replaces the old 1-hop expansion: seed entities anchor a Personalized
+        PageRank diffusion over the full entity-relation graph, and the top
+        ``top_k`` nodes by PPR score become the subgraph used for community
+        detection.  Falls back to the original 1-hop expansion when the
+        underlying storage is not a networkx graph.
+        """
+        lr = self.rag.rag
+        graph = lr.chunk_entity_relation_graph
+
+        # NetworkXStorage exposes its underlying networkx graph as ``._graph``.
+        nx_graph = getattr(graph, "_graph", None)
+        if nx_graph is None or nx_graph.number_of_nodes() == 0:
+            return await self._build_subgraph_1hop(seed_entities)
+
+        # Seed the diffusion with entity names (== graph node ids) weighted by
+        # their fine-channel score.
+        seeds = {
+            s.get("name", s["id"]): float(s.get("score", 1.0))
+            for s in seed_entities
+        }
+        ppr = MindscapeGuidedDiffusion().diffuse(nx_graph, seeds)
+        self._last_ppr = ppr  # cache for the rerank stage
+
+        ranked = sorted(ppr, key=ppr.get, reverse=True)
+        keep = set(seeds) | set(ranked[:top_k])
+
+        nodes = {n: {"id": n, "name": n} for n in keep}
+        for s in seed_entities:
+            name = s.get("name", s["id"])
+            if name in nodes:
+                nodes[name].update({
+                    "name": name,
+                    "type": s.get("type", ""),
+                    "description": s.get("description", ""),
+                })
+
+        edges = [
+            {"source": u, "target": v, "weight": d.get("weight", 1.0)}
+            for u, v, d in nx_graph.edges(data=True)
+            if u in keep and v in keep
+        ]
+
+        return {"nodes": nodes, "edges": edges}
+
+    async def _build_subgraph_1hop(self, seed_entities: list[dict]) -> dict:
+        """Original 1-hop neighbour expansion (fallback for non-networkx storage)."""
         lr = self.rag.rag
         graph = lr.chunk_entity_relation_graph
         seed_ids = {s["id"] for s in seed_entities}
@@ -443,7 +531,6 @@ class DualChannelRetriever:
 
         try:
             import networkx as nx
-            import community as community_louvain
         except ImportError:
             # Fallback: trivial communities
             all_entities = list(nodes.values())
@@ -457,7 +544,7 @@ class DualChannelRetriever:
         for nid, ndata in nodes.items():
             G.add_node(nid, **ndata)
         for edge in edges:
-            G.add_edge(edge["source"], edge["target"])
+            G.add_edge(edge["source"], edge["target"], weight=edge.get("weight", 1.0))
 
         if G.number_of_edges() == 0:
             all_entities = list(nodes.values())
@@ -467,7 +554,7 @@ class DualChannelRetriever:
                 "top_entities": [n.get("name", n["id"]) for n in all_entities[:5]],
             }]
 
-        partition = community_louvain.best_partition(G)
+        partition = LouvainDetector().fit(G)
 
         # Group nodes by community
         comm_map: dict[int, list] = {}
@@ -559,69 +646,37 @@ class DualChannelRetriever:
         coarse: CoarseChannelResult,
         top_k: int = 10,
     ) -> tuple[FineChannelResult, CoarseChannelResult]:
-        """LLM-based re-ranking of fine + coarse candidates.
+        """Model-free re-ranking of fine + coarse candidates.
 
-        Scores each entity/community for relevance to the query,
-        then returns the top-k re-ranked results.
+        Replaces the LLM-based rerank with a deterministic fused score over the
+        fine-channel entities (PPR + BM25 + centrality).  Communities are left
+        in their original order -- they are already summarised by relevance
+        upstream.  Same ``top_k`` truncation contract as before, but with zero
+        LLM round-trips.
         """
-        llm = self._get_llm_func()
-        if llm is None:
+        if not fine.entities:
             return fine, coarse
 
-        # Collect candidates for scoring
-        candidates = []
-        for i, e in enumerate(fine.entities[:20]):
-            candidates.append({
-                "idx": i, "type": "entity",
-                "text": f"{e['name']} [{e['type']}]: {e.get('description', '')[:150]}",
-            })
-        for i, c in enumerate(coarse.communities[:10]):
-            candidates.append({
-                "idx": i, "type": "community",
-                "text": f"社区{'、'.join(c['top_entities'][:5])}: {c.get('summary', '')[:150]}",
-            })
+        nx_graph = getattr(getattr(self.rag.rag, "chunk_entity_relation_graph", None), "_graph", None)
+        if nx_graph is None:
+            return fine, coarse  # no graph -> keep original order
 
-        if len(candidates) <= top_k:
-            return fine, coarse
+        ppr = getattr(self, "_last_ppr", None) or {}
 
-        cand_text = "\n".join(f"[{j}] {c['text']}" for j, c in enumerate(candidates))
-        prompt = f"""请对以下检索结果与查询的相关性打分（0-10分）。
-查询：{query}
+        # Graph nodes are keyed by entity name; PPR is keyed the same way.
+        candidates = [
+            {"id": e.get("name", ""), "name": e.get("name", ""), "description": e.get("description", "")}
+            for e in fine.entities
+        ]
+        ppr_for = {c["id"]: ppr.get(c["id"], 0.0) for c in candidates}
+        ranked = HybridReranker(nx_graph, weights=(0.5, 0.3, 0.2, 0.0)).rerank(
+            candidates, query, ppr_scores=ppr_for
+        )
+        score_map = {c["id"]: c.get("fused_score", 0.0) for c in ranked}
 
-候选结果：
-{cand_text}
-
-严格输出JSON数组，每个元素 {{"idx": 序号, "score": 分数}}，按相关性从高到低排序：
-[{{"idx": 0, "score": 8}}, ...]"""
-
-        try:
-            raw = await llm(prompt)
-            match = re.search(r'\[.*\]', raw, re.DOTALL)
-            if not match:
-                return fine, coarse
-
-            scores = json.loads(match.group())
-            # Sort by score descending
-            scores.sort(key=lambda x: x.get("score", 0), reverse=True)
-
-            # Re-rank entities and communities
-            reranked_entities = []
-            reranked_communities = []
-            for item in scores[:top_k]:
-                idx = item.get("idx", -1)
-                cand_type = candidates[idx]["type"] if 0 <= idx < len(candidates) else ""
-                if cand_type == "entity" and idx < len(fine.entities):
-                    reranked_entities.append(fine.entities[idx])
-                elif cand_type == "community" and idx < len(coarse.communities):
-                    reranked_communities.append(coarse.communities[idx])
-
-            if reranked_entities or reranked_communities:
-                fine.entities = reranked_entities if reranked_entities else fine.entities
-                coarse.communities = reranked_communities if reranked_communities else coarse.communities
-                logger.info(f"Re-ranked: {len(reranked_entities)} entities, {len(reranked_communities)} communities")
-
-        except Exception as e:
-            logger.warning(f"Re-ranking failed, using original order: {e}")
+        fine.entities.sort(key=lambda e: score_map.get(e.get("name", ""), 0.0), reverse=True)
+        fine.entities = fine.entities[:top_k]
+        logger.info(f"Re-ranked (model-free): {len(fine.entities)} entities")
 
         return fine, coarse
 
@@ -745,10 +800,23 @@ class DualChannelRetriever:
 1. 基于以上细通道（精确实体）和粗通道（全局框架）的信息，给出全面准确的回答
 2. 引用的法条必须标注编号
 3. 如果信息不足，请明确指出
-4. 严格按以下JSON格式输出（不要输出其他内容）：
+4. 禁止使用markdown格式（不要用**加粗**、#标题、- 列表等符号），使用纯文本，用数字编号代替列表
+5. 严格按以下JSON格式输出（不要输出其他内容）：
 {{"answer": "你的回答"}}""")
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _strip_markdown(text: str) -> str:
+        """Remove markdown formatting symbols from answer text."""
+        import re
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # **bold** → bold
+        text = re.sub(r'\*(.+?)\*', r'\1', text)        # *italic* → italic
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)  # # heading → heading
+        text = re.sub(r'^[-*+]\s+', '', text, flags=re.MULTILINE)  # - list item → list item
+        text = re.sub(r'`(.+?)`', r'\1', text)          # `code` → code
+        text = re.sub(r'~~(.+?)~~', r'\1', text)        # ~~strike~~ → strike
+        return text.strip()
 
     def _parse_answer_confidence(self, raw: str) -> tuple[str, float]:
         """Parse JSON {answer} from LLM output. Confidence computed separately."""
@@ -764,16 +832,16 @@ class DualChannelRetriever:
                     depth -= 1
                     if depth == 0:
                         data = json.loads(raw[start:i+1])
-                        return data.get("answer", raw), 0.0
+                        return self._strip_markdown(data.get("answer", raw)), 0.0
         except (ValueError, json.JSONDecodeError):
             pass
 
         # Strategy 2: Try entire response as JSON
         try:
             data = json.loads(raw.strip())
-            return data.get("answer", raw), 0.0
+            return self._strip_markdown(data.get("answer", raw)), 0.0
         except (json.JSONDecodeError, ValueError):
-            return raw.strip(), 0.0
+            return self._strip_markdown(raw), 0.0
 
     def _build_fallback_answer(self, fine: FineChannelResult, coarse: CoarseChannelResult) -> str:
         """Build a simple answer when LLM is unavailable."""

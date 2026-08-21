@@ -126,11 +126,14 @@ async def lifespan(app: FastAPI):
     from mia_emb import MiAConfig
     from mia_emb.rag_manager import MiARAGManager
 
-    config = MiAConfig(
+    config_kwargs: dict = dict(
         model_path=os.getenv("MODEL_PATH", "MindscapeRAG/MiA-Emb-8B"),
         base_model_path=os.getenv("BASE_MODEL_PATH", "Qwen/Qwen3-Embedding-8B"),
-        deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
     )
+    dk = os.getenv("DEEPSEEK_API_KEY", "")
+    if dk:
+        config_kwargs["deepseek_api_key"] = dk
+    config = MiAConfig(**config_kwargs)
     from api.database import Base, SessionLocal, engine as db_engine
     Base.metadata.create_all(bind=db_engine)
 
@@ -202,15 +205,15 @@ async def lifespan(app: FastAPI):
     # Load documents from database (per-user)
     db2 = SessionLocal()
     try:
-        from api.models import Document, ClusterFile, Cluster
+        from api.models import Document, ClusterFile, Cluster, User
         from collections import defaultdict
 
-        # Group documents by user_id
+        # Group documents by user_id (with file names for chunk-to-file mapping)
         ready_docs = db2.query(Document).filter(Document.status == "ready").all()
-        user_docs: dict[int, list[str]] = defaultdict(list)
+        user_docs: dict[int, list[tuple[str, str]]] = defaultdict(list)
         for d in ready_docs:
             if d.content and d.user_id:
-                user_docs[d.user_id].append(d.content)
+                user_docs[d.user_id].append((d.content, d.filename or ""))
 
         # Group cluster files by owner
         cluster_files = (
@@ -223,21 +226,41 @@ async def lifespan(app: FastAPI):
             if cf.content:
                 cluster = db2.query(Cluster).filter(Cluster.id == cf.cluster_id).first()
                 if cluster and cluster.user_id:
-                    user_docs[cluster.user_id].append(cf.content)
+                    user_docs[cluster.user_id].append((cf.content, cf.filename or ""))
 
-        # Load into per-user RAG instances
+        # Load into per-user RAG instances (incremental to avoid duplicates on restart)
         total_loaded = 0
-        for user_id, contents in user_docs.items():
-            if contents:
+        for user_id, doc_entries in user_docs.items():
+            if doc_entries:
+                contents = [e[0] for e in doc_entries]
+                file_names = [e[1] for e in doc_entries]
                 logger.info(f"Loading {len(contents)} documents for user {user_id}...")
                 user_rag = await _rag_manager.get_user_rag(user_id)
-                await user_rag.insert_documents(contents)
-                total_loaded += len(contents)
+                stats = await user_rag.insert_documents_incremental(contents, file_names=file_names)
+                total_loaded += stats.get("new", 0)
+                logger.info(f"  User {user_id}: {stats}")
+
+        # Create RAG instances for all approved users (even without documents)
+        all_users = db2.query(User).filter(User.status == "approved").all()
+        for u in all_users:
+            if u.id not in _rag_manager._user_rags:
+                try:
+                    await _rag_manager.get_user_rag(u.id)
+                    logger.info(f"Created empty RAG instance for user {u.id} ({u.username})")
+                except Exception as e:
+                    logger.warning(f"Failed to create RAG for user {u.id}: {e}")
+
+        # Persist all graphs to disk (ensures GraphML files exist for visualization)
+        for uid, rag_instance in _rag_manager._user_rags.items():
+            try:
+                await rag_instance.persist_graph()
+            except Exception as e:
+                logger.debug(f"Graph persist for user {uid}: {e}")
 
         if total_loaded:
-            logger.info(f"Loaded {total_loaded} total documents across {len(user_docs)} users")
+            logger.info(f"Loaded {total_loaded} new documents across {len(user_docs)} users")
         else:
-            logger.info("No documents found in database")
+            logger.info("No new documents to load (all already inserted)")
     finally:
         db2.close()
 
@@ -301,7 +324,7 @@ async def query(req: QueryRequest, request: Request):
     logger.info(f"[{request_id}] Query: {question[:60]}...")
 
     # Federation node queries across all users' knowledge graphs
-    result = await _rag_manager.query_global(question)
+    result = await _rag_manager.query_global(question, mode="mix")
 
     payload = json.dumps({
         "answer": result["answer"],
@@ -310,7 +333,7 @@ async def query(req: QueryRequest, request: Request):
         "coarse_community_count": result["metadata"].get("coarse_community_count", 0),
         "mindscape_used": result["metadata"].get("mindscape_used", False),
         "evidence": result.get("evidence", []),
-        "parsed_query": result["metadata"].get("parsed_query", {}),
+        "parsed_query": result.get("parsed_query", {}),
     }, ensure_ascii=False)
 
     # Encrypt with optional SM3 integrity tag
@@ -340,9 +363,10 @@ async def health(request: Request):
 # ── Keep old REST API for direct access (Swagger docs) ───────────
 
 try:
-    from api.routers import auth, query as api_query, documents, nodes
+    from api.routers import auth, query as api_query, documents, graph, nodes
     app.include_router(auth.router)
     app.include_router(documents.router)
+    app.include_router(graph.router)
     app.include_router(api_query.router)
     app.include_router(nodes.router)
     logger.info("Direct REST API routes loaded")

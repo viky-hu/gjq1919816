@@ -8,6 +8,7 @@ encryption across the federation.
 
 import base64
 import os
+import secrets
 
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel
@@ -20,7 +21,7 @@ FEDERATION_INTERNAL_TOKEN = os.getenv("FEDERATION_INTERNAL_TOKEN", "")
 def _verify_internal_token(token: str | None):
     if not FEDERATION_INTERNAL_TOKEN:
         raise HTTPException(status_code=503, detail="Internal token not configured")
-    if not token or token != FEDERATION_INTERNAL_TOKEN:
+    if not token or not secrets.compare_digest(token, FEDERATION_INTERNAL_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid internal token")
 
 

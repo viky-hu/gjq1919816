@@ -2,12 +2,15 @@
 Clusters router: cluster and file management CRUD.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger("clusters")
 
 from ..deps import get_current_user, get_db
 from ..models import Cluster, ClusterFile, User
@@ -201,18 +204,21 @@ async def upload_file(
 
     # Save file to disk
     file_id = str(uuid.uuid4())
-    file_ext = Path(file.filename or "unknown").suffix
+    file_ext = Path(file.filename or "unknown").suffix.lower()
     saved_filename = f"{file_id}{file_ext}"
     file_path = UPLOAD_DIR / saved_filename
     file_path.write_bytes(content)
 
-    # Extract text content for supported formats
+    # Extract text content for text-based formats only
+    TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".log"}
     text_content = None
-    if file.content_type and file.content_type.startswith("text/"):
-        try:
-            text_content = content.decode("utf-8")
-        except UnicodeDecodeError:
-            pass
+    if file_ext in TEXT_EXTENSIONS:
+        for enc in ["utf-8", "gbk", "gb2312", "gb18030"]:
+            try:
+                text_content = content.decode(enc)
+                break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
 
     # Create database record
     cluster_file = ClusterFile(
@@ -222,7 +228,7 @@ async def upload_file(
         size_bytes=size_bytes,
         mime_type=file.content_type or "application/octet-stream",
         content=text_content,
-        status="ready",
+        status="processing",
     )
     db.add(cluster_file)
 
@@ -232,19 +238,28 @@ async def upload_file(
     db.commit()
     db.refresh(cluster_file)
 
-    # 异步加载到用户专属知识图谱
-    if text_content:
-        try:
-            from ..deps import get_user_rag
-            import asyncio
-
-            async def _insert_to_user_kg():
-                user_rag = await get_user_rag(current_user.id)
-                await user_rag.insert_documents([text_content])
-
-            asyncio.create_task(_insert_to_user_kg())
-        except Exception:
-            pass  # 静默失败，不影响上传响应
+    # Embed into user's knowledge graph
+    MULTIMODAL_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
+    try:
+        from ..deps import get_user_rag
+        user_rag = await get_user_rag(current_user.id)
+        if file_ext in MULTIMODAL_EXTENSIONS:
+            logger.info(f"Processing multimodal file: {file.filename} (ext={file_ext})")
+            await user_rag.insert_files([str(file_path)])
+            logger.info(f"Multimodal embedding done: {file.filename}")
+        elif text_content:
+            logger.info(f"Inserting text document: {file.filename} ({len(text_content)} chars)")
+            await user_rag.insert_documents([text_content])
+            logger.info(f"Text embedding done: {file.filename}")
+        else:
+            logger.warning(f"No content to embed for {file.filename} (ext={file_ext})")
+        cluster_file.status = "ready"
+        db.commit()
+    except Exception as e:
+        logger.error(f"KG embedding failed for {file.filename}: {e}")
+        cluster_file.status = "error"
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"文献嵌入失败: {e}")
 
     return ClusterFileResponse.model_validate(cluster_file)
 

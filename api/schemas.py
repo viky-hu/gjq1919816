@@ -28,6 +28,7 @@ class UserResponse(BaseModel):
     role: str
     status: str = "pending"
     node_id: Optional[str] = None
+    node_type: Optional[str] = None  # "center" or "edge", looked up from Node table
     created_at: datetime
 
     model_config = {"from_attributes": True}

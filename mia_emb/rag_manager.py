@@ -62,6 +62,9 @@ class MiARAGManager:
 
         await rag._setup_lightrag("zh")
         rag._load_mindscape()
+        rag._chunk_file_map = rag._load_chunk_file_map()
+        logger.info(f"Loaded {len(rag._chunk_file_map)} chunk-to-file mappings for user {user_id}")
+        await rag._build_chunk_id_to_file_map()
 
         self._user_rags[user_id] = rag
         logger.info(f"User {user_id} RAG instance ready")
@@ -180,7 +183,7 @@ class MiARAGManager:
         confidences = [r.get("metadata", {}).get("confidence", 0) for r in all_results]
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0
 
-        # Collect all evidence from all results
+        # Collect all evidence from all results (already processed with file names)
         all_evidence = []
         all_fine_chunks = []
         all_coarse_communities = []
@@ -189,6 +192,39 @@ class MiARAGManager:
             if isinstance(ctx, dict):
                 all_fine_chunks.extend(ctx.get("fine_chunks", []))
                 all_coarse_communities.extend(ctx.get("coarse_communities", []))
+            # Use pre-built evidence from each RAG instance (has file name mapping applied)
+            result_evidence = r.get("evidence", [])
+            if result_evidence:
+                all_evidence.extend(result_evidence)
+
+        # If no pre-built evidence, fall back to building from raw chunks
+        if not all_evidence:
+            for r in all_results:
+                rag_instance = None
+                for uid, rag in self._user_rags.items():
+                    if uid == r.get("source_user_id"):
+                        rag_instance = rag
+                        break
+                ctx = r.get("context", {})
+                if isinstance(ctx, dict):
+                    for c in ctx.get("fine_chunks", [])[:5]:
+                        if isinstance(c, dict) and c.get("content"):
+                            content = c.get("content", "")
+                            chunk_id = c.get("id", "")
+                            file_name = rag_instance.lookup_file_name(content, chunk_id=chunk_id) if rag_instance else ""
+                            source = file_name if file_name else chunk_id or "unknown"
+                            all_evidence.append({
+                                "source": source,
+                                "content": content[:500],
+                                "relevance": c.get("score", 0.0),
+                            })
+                    for c in ctx.get("coarse_communities", [])[:3]:
+                        if isinstance(c, dict):
+                            all_evidence.append({
+                                "source": f"社区{c.get('id', '?')}: {c.get('summary', '')}",
+                                "content": "、".join(c.get("top_entities", [])[:5]),
+                                "relevance": 0.7,
+                            })
 
         return {
             "answer": aggregated_answer,
@@ -197,13 +233,7 @@ class MiARAGManager:
                 "coarse_communities": all_coarse_communities[:5],
                 "chunks": best.get("context", {}).get("chunks", [])[:5],
             },
-            "evidence": [
-                {"source": c.get("id", "unknown"), "content": c.get("content", "")[:500], "relevance": c.get("score", 0.0)}
-                for c in all_fine_chunks[:5] if isinstance(c, dict) and c.get("content")
-            ] + [
-                {"source": f"社区{c.get('id', '?')}: {c.get('summary', '')}", "content": "、".join(c.get("top_entities", [])[:5]), "relevance": 0.7}
-                for c in all_coarse_communities[:3] if isinstance(c, dict)
-            ],
+            "evidence": all_evidence[:10],
             "parsed_query": best.get("metadata", {}).get("parsed_query", {}),
             "metadata": {
                 "mode": "global",

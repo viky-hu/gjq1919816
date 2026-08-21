@@ -36,3 +36,6 @@ uploads/
 audit_logs/
 *.db
 *.sqlite
+
+# Vendored LightRAG fork (external dependency, installed via pip install lightrag-hku)
+LightRAG/
