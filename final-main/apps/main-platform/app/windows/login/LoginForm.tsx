@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { authLogin, authRegister } from "@/app/lib/client/auth-adapter";
+import { shouldUseEmptyLoginPreview } from "./login-preview";
 
 interface LoginFormProps {
   onSignIn: (isAdmin: boolean, account: string, nodeType?: string) => void;
@@ -79,6 +80,12 @@ export function LoginForm({ onSignIn }: LoginFormProps) {
   const handleLogin = async () => {
     const account = loginAccount.trim();
     const password = loginPassword;
+    if (shouldUseEmptyLoginPreview(account, password)) {
+      setLoginError("");
+      onSignIn(false, "preview-user", "center");
+      return;
+    }
+
     if (!account) { setLoginError("请输入账号"); return; }
     if (!password) { setLoginError("请输入密码"); return; }
 

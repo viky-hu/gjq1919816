@@ -25,6 +25,25 @@ export const COLLAPSE_COORDS = {
   y2: 0.83 * VH,
 };
 
+export const FULLSCREEN_COORDS = {
+  x1: 0,
+  x2: VW,
+  y1: 0,
+  y2: VH,
+};
+
+// Keep the final line stroke fully outside the SVG viewport.
+export const LINE_EXIT_OVERTRAVEL = PHASE1_STROKE * 2;
+
+export function getLineExitCoords(coords: { x1: number; x2: number; y1: number; y2: number }) {
+  return {
+    x1: coords.x1 - LINE_EXIT_OVERTRAVEL,
+    x2: coords.x2 + LINE_EXIT_OVERTRAVEL,
+    y1: coords.y1 - LINE_EXIT_OVERTRAVEL,
+    y2: coords.y2 + LINE_EXIT_OVERTRAVEL,
+  };
+}
+
 // Background reference grid positions (non-uniform)
 export const GRID_V = [0.08, 0.18, 0.3, 0.42, 0.58, 0.7, 0.82, 0.92].map((r) => r * VW);
 export const GRID_H = [0.06, 0.14, 0.28, 0.44, 0.56, 0.72, 0.86, 0.94].map((r) => r * VH);

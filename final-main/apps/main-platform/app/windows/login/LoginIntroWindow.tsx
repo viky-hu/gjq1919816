@@ -10,6 +10,8 @@ import {
   PHASE1_STROKE,
   INTRO_COORDS,
   COLLAPSE_COORDS,
+  FULLSCREEN_COORDS,
+  getLineExitCoords,
   GRID_V,
   GRID_H,
 } from "../shared/coords";
@@ -35,8 +37,15 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
   const coordsRef = useRef({ ...INTRO_COORDS });
   const canTriggerRef = useRef(false);
   const playedRef = useRef(false);
+  const loadingPlayedRef = useRef(false);
+  const loadingTriggerRef = useRef<(() => void) | null>(null);
   const [inverted, setInverted] = useState(false);
   const [animationReady, setAnimationReady] = useState(false);
+
+  const handleSignIn = (isAdmin: boolean, account: string, nodeType?: string) => {
+    onSignIn(isAdmin, account, nodeType);
+    loadingTriggerRef.current?.();
+  };
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -60,6 +69,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
 
     let introTl: gsap.core.Timeline | null = null;
     let stage2Tl: gsap.core.Timeline | null = null;
+    let loadingTl: gsap.core.Timeline | null = null;
     let introClockTime = 0;
     let introTickerAttached = false;
     let introTickerHasTicked = false;
@@ -74,6 +84,8 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
 
     canTriggerRef.current = false;
     playedRef.current = false;
+    loadingPlayedRef.current = false;
+    loadingTriggerRef.current = null;
     setAnimationReady(false);
 
     const mark = (name: string) => {
@@ -129,6 +141,14 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
       pendingTimers.clear();
     };
 
+    const applyCoords = (nextCoords: typeof coords, syncPanelFill = true) => {
+      updateLines(svg, nextCoords);
+      updateClipRect(clipRect, nextCoords);
+      if (syncPanelFill) updatePanelFill(panelRect, nextCoords);
+      updatePanelLayout(introPanel, loginPanel, nextCoords);
+      updateLogoPosition(logoGroup, nextCoords);
+    };
+
     const applyIntroEndState = () => {
       gsap.set(gridLines, { opacity: 0.55 });
       gsap.set(mainLines, { strokeDashoffset: 0 });
@@ -153,10 +173,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
           },
         });
       }
-      updateLines(svg, coords);
-      updateClipRect(clipRect, coords);
-      updatePanelLayout(introPanel, loginPanel, coords);
-      updateLogoPosition(logoGroup, coords);
+      applyCoords(coords);
     };
 
     const context = gsap.context(() => {
@@ -194,10 +211,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
             },
           });
         }
-        updateLines(svg, coords);
-        updateClipRect(clipRect, coords);
-        updatePanelLayout(introPanel, loginPanel, coords);
-        updateLogoPosition(logoGroup, coords);
+        applyCoords(coords, false);
 
         // Keep the timeline paused until the SVG has had a visible start frame.
         introTl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
@@ -251,13 +265,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
         stage2Tl.to(coords, {
           ...COLLAPSE_COORDS,
           duration: 1.02,
-          onUpdate: () => {
-            updateLines(svg, coords);
-            updateClipRect(clipRect, coords);
-            updatePanelFill(panelRect, coords);
-            updatePanelLayout(introPanel, loginPanel, coords);
-            updateLogoPosition(logoGroup, coords);
-          },
+          onUpdate: () => applyCoords(coords),
         }, 0);
 
         if (panelRect) {
@@ -273,6 +281,41 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
           stage2Tl.to(logoFill.querySelectorAll("path"), { fill: "#ffffff", duration: 0.45 }, 0.08);
         }
         stage2Tl.call(() => setInverted(true), [], 0.06);
+
+        const loadingLineCoords = { ...FULLSCREEN_COORDS };
+        loadingTl = gsap.timeline({ paused: true, defaults: { ease: "power3.inOut" } });
+        loadingTl.to([introPanel, loginPanel, hintLayer, logoGroup], {
+          autoAlpha: 0,
+          duration: 0.22,
+        }, 0);
+        loadingTl.to(coords, {
+          ...FULLSCREEN_COORDS,
+          duration: 1.02,
+          onUpdate: () => applyCoords(coords),
+        }, 0);
+        if (panelRect) {
+          loadingTl.to(panelRect, { fill: BRAND_BLUE, duration: 0.01 }, 0);
+        }
+        loadingTl.to(loadingLineCoords, {
+          ...getLineExitCoords(FULLSCREEN_COORDS),
+          duration: 0.14,
+          onUpdate: () => updateLines(svg, loadingLineCoords),
+        }, 1.02);
+        loadingTl.call(() => {
+          if (process.env.NODE_ENV !== "production") {
+            page.dataset.loadingState = "complete";
+          }
+          mark("loading-completed");
+        });
+
+        const triggerLoading = () => {
+          if (!canTriggerRef.current || !playedRef.current || loadingPlayedRef.current || !loadingTl) return;
+          loadingPlayedRef.current = true;
+          stage2Tl?.progress(1).pause();
+          loadingTl.invalidate().restart();
+          mark("loading-started");
+        };
+        loadingTriggerRef.current = triggerLoading;
 
         const triggerStage2 = () => {
           if (!canTriggerRef.current || playedRef.current || !stage2Tl) return;
@@ -434,10 +477,13 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
       removeInteractionListeners();
       introTl?.kill();
       stage2Tl?.kill();
+      loadingTl?.kill();
       context.revert();
       removeIntroTicker();
       canTriggerRef.current = false;
       playedRef.current = false;
+      loadingPlayedRef.current = false;
+      loadingTriggerRef.current = null;
       introVisibleReady = false;
       introStartScheduled = false;
       setAnimationReady(false);
@@ -579,7 +625,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
             opacity={0}
           >
             <div className="svg-text-content is-inverted">
-              {typeof LoginForm === 'function' ? <LoginForm onSignIn={onSignIn} /> : <div>LoginForm load error</div>}
+              {typeof LoginForm === 'function' ? <LoginForm onSignIn={handleSignIn} /> : <div>LoginForm load error</div>}
             </div>
           </foreignObject>
         </g>

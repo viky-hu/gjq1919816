@@ -386,3 +386,42 @@
   - 模型路径（`MODEL_PATH`、`BASE_MODEL_PATH`）和 `DEEPSEEK_API_KEY` 仍为占位符，需队友提供后填入 `backend.env.example`。
   - `node_server.py` SM4 key 若未设置，节点将以 base64 透明模式运行（已有 warning log），联调前需确认所有节点共享同一 `FEDERATION_SM4_KEY`。
   - `localStorage["mia_rag_token"]` 无过期清理机制，建议后续在登出时显式 `removeItem`。
+
+### 2026-08-23 - Window 1 登录成功 loading 动效
+- 主责文件：
+  - `apps/main-platform/app/windows/login/LoginIntroWindow.tsx`
+- 协同文件：
+  - `apps/main-platform/app/login-window-demo.tsx`
+  - `apps/main-platform/app/windows/shared/coords.ts`
+  - `apps/main-platform/app/windows/login/loading-geometry.test.mjs`
+  - `docs/architecture/modules-index.md`
+- 关键扩展性结论：
+  - `LoginIntroWindow` 继续作为登录阶段动画的唯一编排者，父层只同步认证身份并暂缓切窗；后续主页面转场可以从全屏蓝色稳定态接管，不需要重做登录表单。
+  - 主扩张段继续使用单一 `Coords` 同步四线、`clip-rect`、`panel-fill`、布局和 Logo；仅在明确批准的 0.14 秒尾段由独立线坐标将四线移出视口。
+  - 全屏终点和离屏终点集中在共享坐标模块，避免在时间线中扩散视口数字和离屏偏移硬编码。
+  - loading 不挂载宏观窗口，避免首屏动画与重型可视化模块并发初始化。
+- 重构动作：
+  - 将 intro fallback、初始化和阶段 2 中重复的坐标投影调用收敛到 `applyCoords`。
+  - 增加原生 Node 几何契约测试，覆盖全屏终点和线条完全离屏终点。
+- 风险与后续：
+  - 本需求明确要求 loading 忽略 `prefers-reduced-motion`，对有减弱动效偏好的用户仍播放完整过渡；后续若产品策略变化，应单独恢复 loading 的无动画终态分支。
+  - 线条离屏尾段与全屏色块存在短暂逻辑分离，这是已确认的视觉要求；后续若要求全程严格边界一致，应改为同步扩张到视口外坐标。
+- 审查结论：通过
+- 审查人：AI
+
+### 2026-08-23 - Window 1 登录 loading 本地预览旁路
+- 主责文件：
+  - `apps/main-platform/app/windows/login/login-preview.ts`
+  - `apps/main-platform/app/windows/login/LoginForm.tsx`
+- 协同文件：
+  - `apps/main-platform/app/windows/login/loading-geometry.test.mjs`
+  - `docs/architecture/modules-index.md`
+- 关键扩展性结论：
+  - 旁路只存在于登录表单的空值校验之前，仍复用既有 `onSignIn` 回调和 loading 时间线，不复制认证或动画逻辑。
+  - 任一字段有值时仍走真实认证接口；生产环境通过 `NODE_ENV` 自动关闭旁路。
+- 重构动作：
+  - 将临时预览判断抽为无依赖的 `login-preview.ts`，并用原生 Node 测试锁定空表单边界。
+- 风险与后续：
+  - 开发环境空表单会以 `preview-user` 身份进入 loading，预览完成后仍停留在蓝屏；后续恢复真实预览时删除或关闭该模块即可。
+- 审查结论：通过
+- 审查人：AI

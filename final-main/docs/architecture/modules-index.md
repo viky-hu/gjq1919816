@@ -48,6 +48,14 @@
 - 介绍窗口：`apps/main-platform/app/windows/login/LoginIntroWindow.tsx`
 - 登录表单：`apps/main-platform/app/windows/login/LoginForm.tsx`（账号字段 + 前端校验 + admin mock）
 - 登录工具：`apps/main-platform/app/windows/login/utils.ts`
+- 登录预览开关：`apps/main-platform/app/windows/login/login-preview.ts`
+  - 仅开发环境允许空表单直接触发登录成功回调，用于预览登录 loading；生产环境始终保留真实认证校验。
+- 登录成功 loading 编排：`apps/main-platform/app/windows/login/LoginIntroWindow.tsx`
+  - 认证成功后承载 SVG 内容淡出、全屏蓝色色块扩张和四线离屏尾段；最终保持登录窗口挂载，不在本阶段切换到宏观窗口。
+- 登录窗口顶层状态：`apps/main-platform/app/login-window-demo.tsx`
+  - 登录成功时同步写入运行时身份，仅负责窗口状态与认证状态，不抢先挂载宏观平台。
+- 登录 loading 几何契约：`apps/main-platform/app/windows/shared/coords.ts`
+  - 提供 `FULLSCREEN_COORDS` 与 `getLineExitCoords`，集中定义全屏终点和线条离屏终点。
 
 ## 6. 跨窗口共享能力
 

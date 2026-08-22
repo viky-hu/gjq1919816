@@ -54,7 +54,6 @@ export function LoginWindowDemo() {
     setUsername(account);
     // Set center node status synchronously from login response
     setIsSelfCenterNode(nodeType === "center" || isAdmin);
-    handleOpenMacro();
   };
 
   if (activeWindow === "macro") {
