@@ -26,6 +26,7 @@ models/**/*.safetensors
 # Secrets
 .env
 *.key
+backend.local.env
 
 # OS
 .DS_Store

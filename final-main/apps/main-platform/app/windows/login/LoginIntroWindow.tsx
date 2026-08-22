@@ -1,8 +1,7 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { gsap } from "gsap";
-import { BeamsBackground } from "../../beams-background";
 import {
   BRAND_BLUE,
   GRID_COLOR,
@@ -31,16 +30,18 @@ interface LoginIntroWindowProps {
 }
 
 export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
+  const pageRef = useRef<HTMLElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const beamsLayerRef = useRef<HTMLDivElement>(null);
   const coordsRef = useRef({ ...INTRO_COORDS });
   const canTriggerRef = useRef(false);
   const playedRef = useRef(false);
   const [inverted, setInverted] = useState(false);
+  const [animationReady, setAnimationReady] = useState(false);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const svg = svgRef.current;
-    if (!svg) return;
+    const page = pageRef.current;
+    if (!svg || !page) return;
 
     const coords = coordsRef.current;
     const mainLines = svg.querySelectorAll<SVGLineElement>(".main-line");
@@ -54,156 +55,401 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
     const logoGroup = svg.querySelector<SVGGElement>("#logo-group");
     const logoFill = svg.querySelector<SVGGElement>("#logo-fill");
     const logoOutline = svg.querySelector<SVGGElement>("#logo-outline");
-    const beamsLayer = beamsLayerRef.current;
+    const lineLengths: number[] = [];
+    const logoLineLengths: number[] = [];
 
-    mainLines.forEach((line) => {
-      const len = line.getTotalLength();
-      gsap.set(line, { strokeDasharray: len, strokeDashoffset: len });
-    });
-    logoLines.forEach((path) => {
-      const len = path.getTotalLength();
-      gsap.set(path, { strokeDasharray: len, strokeDashoffset: len });
-    });
+    let introTl: gsap.core.Timeline | null = null;
+    let stage2Tl: gsap.core.Timeline | null = null;
+    let introClockTime = 0;
+    let introTickerAttached = false;
+    let introTickerHasTicked = false;
+    let introVisibleReady = false;
+    let introStartScheduled = false;
+    let introCompleted = false;
+    let disposed = false;
+    let removeInteractionListeners = () => {};
+    let removeIntroTicker = () => {};
+    const pendingRafs = new Set<number>();
+    const pendingTimers = new Set<number>();
 
-    gsap.set(gridLines, { opacity: 0.55 });
-    gsap.set(introPanel, { opacity: 0 });
-    gsap.set(hintLayer, { opacity: 0 });
-    gsap.set(loginPanel, { opacity: 0 });
-    if (beamsLayer) gsap.set(beamsLayer, { opacity: 0.17 });
-    if (logoFill) gsap.set(logoFill, { fillOpacity: 0 });
-    if (panelRect) {
-      gsap.set(panelRect, {
-        fill: "#ffffff",
-        attr: {
-          x: (coords.x1 + coords.x2) / 2,
-          y: (coords.y1 + coords.y2) / 2,
-          width: 0,
-          height: 0,
-        },
+    canTriggerRef.current = false;
+    playedRef.current = false;
+    setAnimationReady(false);
+
+    const mark = (name: string) => {
+      if (
+        process.env.NODE_ENV !== "production" &&
+        typeof window !== "undefined" &&
+        typeof window.performance?.mark === "function"
+      ) {
+        window.performance.mark(`login-intro-${name}`);
+      }
+    };
+
+    const writeDebugSnapshot = (time: number) => {
+      if (process.env.NODE_ENV === "production") return;
+      page.dataset.introTime = time.toFixed(4);
+      page.dataset.introLineLengths = lineLengths.map((length) => length.toFixed(2)).join(",");
+      page.dataset.introLineOffsets = Array.from(mainLines)
+        .map((line) => line.style.strokeDashoffset || getComputedStyle(line).strokeDashoffset)
+        .join(",");
+      page.dataset.introLogoLengths = logoLineLengths.map((length) => length.toFixed(2)).join(",");
+      page.dataset.introLogoOffsets = Array.from(logoLines)
+        .map((line) => line.style.strokeDashoffset || getComputedStyle(line).strokeDashoffset)
+        .join(",");
+      page.dataset.introPanelSize = panelRect
+        ? `${panelRect.getAttribute("width") ?? "0"}x${panelRect.getAttribute("height") ?? "0"}`
+        : "0x0";
+    };
+
+    const requestManagedFrame = (callback: FrameRequestCallback) => {
+      let id = 0;
+      id = window.requestAnimationFrame((time) => {
+        pendingRafs.delete(id);
+        callback(time);
       });
-    }
+      pendingRafs.add(id);
+      return id;
+    };
 
-    updateLines(svg, coords);
-    updateClipRect(clipRect, coords);
-    updatePanelLayout(introPanel, loginPanel, coords);
-    updateLogoPosition(logoGroup, coords);
+    const requestManagedTimeout = (callback: () => void, delay: number) => {
+      let id = 0;
+      id = window.setTimeout(() => {
+        pendingTimers.delete(id);
+        callback();
+      }, delay);
+      pendingTimers.add(id);
+      return id;
+    };
 
-    // === Phase 1: Draw ===
-    const introTl = gsap.timeline({
-      defaults: { ease: "power2.out" },
-      onComplete: () => {
-        canTriggerRef.current = true;
-      },
-    });
+    const cancelPendingWork = () => {
+      pendingRafs.forEach((id) => window.cancelAnimationFrame(id));
+      pendingRafs.clear();
+      pendingTimers.forEach((id) => window.clearTimeout(id));
+      pendingTimers.clear();
+    };
 
-    introTl.to(mainLines, {
-      strokeDashoffset: 0,
-      duration: 1.08,
-      ease: LINE_DRAW_EASE,
-      stagger: 0.08,
-    }, 0);
+    const applyIntroEndState = () => {
+      gsap.set(gridLines, { opacity: 0.55 });
+      gsap.set(mainLines, { strokeDashoffset: 0 });
+      gsap.set(logoLines, { strokeDashoffset: 0 });
+      gsap.set(introPanel, { autoAlpha: 1, y: coords.y1 + 16 });
+      gsap.set(loginPanel, { autoAlpha: 0 });
+      gsap.set(hintLayer, { autoAlpha: 1 });
+      if (logoFill) {
+        gsap.set(logoFill, { fillOpacity: 1 });
+      }
+      if (logoOutline) {
+        gsap.set(logoOutline, { stroke: BRAND_BLUE });
+      }
+      if (panelRect) {
+        gsap.set(panelRect, {
+          fill: "#ffffff",
+          attr: {
+            x: coords.x1,
+            y: coords.y1,
+            width: coords.x2 - coords.x1,
+            height: coords.y2 - coords.y1,
+          },
+        });
+      }
+      updateLines(svg, coords);
+      updateClipRect(clipRect, coords);
+      updatePanelLayout(introPanel, loginPanel, coords);
+      updateLogoPosition(logoGroup, coords);
+    };
 
-    introTl.to(logoLines, {
-      strokeDashoffset: 0,
-      duration: 0.94,
-      ease: LOGO_DRAW_EASE,
-      stagger: 0.04,
-    }, 0.12);
+    const context = gsap.context(() => {
+      try {
+        const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    if (panelRect) {
-      introTl.to(panelRect, {
-        attr: {
-          x: coords.x1,
-          y: coords.y1,
-          width: coords.x2 - coords.x1,
-          height: coords.y2 - coords.y1,
-        },
-        duration: 0.72,
-        ease: "power3.out",
-      }, 0.4);
-    }
+        lineLengths.push(...Array.from(mainLines, (line) => line.getTotalLength()));
+        logoLineLengths.push(...Array.from(logoLines, (line) => line.getTotalLength()));
 
-    if (logoFill) {
-      introTl.to(logoFill, { fillOpacity: 1, duration: 0.35 }, 0.74);
-    }
-
-    introTl.fromTo(introPanel, {
-      opacity: 0,
-      y: coords.y1 + 20,
-    }, {
-      opacity: 1,
-      y: coords.y1 + 16,
-      duration: 0.42,
-      ease: "power2.out",
-    }, 0.9);
-
-    introTl.to(hintLayer, { opacity: 1, duration: 0.28 }, 1.1);
-
-    // === Phase 2: Inversion + collapse + login switch ===
-    const stage2Tl = gsap.timeline({ paused: true, defaults: { ease: "power3.inOut" } });
-
-    stage2Tl.to(coords, {
-      ...COLLAPSE_COORDS,
-      duration: 1.02,
-      onUpdate: () => {
+        gsap.set(gridLines, { opacity: 0.55 });
+        mainLines.forEach((line, index) => {
+          gsap.set(line, {
+            strokeDasharray: lineLengths[index],
+            strokeDashoffset: lineLengths[index],
+          });
+        });
+        logoLines.forEach((line, index) => {
+          gsap.set(line, {
+            strokeDasharray: logoLineLengths[index],
+            strokeDashoffset: logoLineLengths[index],
+          });
+        });
+        gsap.set(introPanel, { autoAlpha: 0, y: coords.y1 + 20 });
+        gsap.set(hintLayer, { autoAlpha: 0 });
+        gsap.set(loginPanel, { autoAlpha: 0 });
+        if (logoFill) gsap.set(logoFill, { fillOpacity: 0 });
+        if (panelRect) {
+          gsap.set(panelRect, {
+            fill: "#ffffff",
+            attr: {
+              x: (coords.x1 + coords.x2) / 2,
+              y: (coords.y1 + coords.y2) / 2,
+              width: 0,
+              height: 0,
+            },
+          });
+        }
         updateLines(svg, coords);
         updateClipRect(clipRect, coords);
-        updatePanelFill(panelRect, coords);
         updatePanelLayout(introPanel, loginPanel, coords);
         updateLogoPosition(logoGroup, coords);
-      },
-    }, 0);
 
-    if (panelRect) {
-      stage2Tl.to(panelRect, { fill: BRAND_BLUE, duration: 0.54 }, 0.05);
-    }
-    stage2Tl.to(introPanel, { opacity: 0, duration: 0.22 }, 0.12);
-    stage2Tl.to(loginPanel, { opacity: 1, duration: 0.34 }, 0.24);
-    stage2Tl.to(hintLayer, { opacity: 0, duration: 0.18 }, 0.03);
-    if (logoOutline) {
-      stage2Tl.to(logoOutline, { stroke: "#ffffff", duration: 0.45 }, 0.08);
-    }
-    if (logoFill) {
-      stage2Tl.to(logoFill.querySelectorAll("path"), { fill: "#ffffff", duration: 0.45 }, 0.08);
-    }
-    stage2Tl.call(() => setInverted(true), [], 0.06);
+        // Keep the timeline paused until the SVG has had a visible start frame.
+        introTl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
 
-    const playStage2 = () => {
-      if (!canTriggerRef.current || playedRef.current) return;
-      playedRef.current = true;
-      stage2Tl.play(0);
-    };
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY !== 0) playStage2();
-    };
-    const onClick = () => playStage2();
+        introTl.to(mainLines, {
+          strokeDashoffset: 0,
+          duration: 1.08,
+          ease: LINE_DRAW_EASE,
+          stagger: 0.08,
+        }, 0);
 
-    window.addEventListener("wheel", onWheel, { passive: true });
-    window.addEventListener("click", onClick);
-    introTl.play(0);
+        introTl.to(logoLines, {
+          strokeDashoffset: 0,
+          duration: 0.94,
+          ease: LOGO_DRAW_EASE,
+          stagger: 0.04,
+        }, 0.12);
+
+        if (panelRect) {
+          introTl.to(panelRect, {
+            attr: {
+              x: coords.x1,
+              y: coords.y1,
+              width: coords.x2 - coords.x1,
+              height: coords.y2 - coords.y1,
+            },
+            duration: 0.72,
+            ease: "power3.out",
+          }, 0.4);
+        }
+
+        if (logoFill) {
+          introTl.to(logoFill, { fillOpacity: 1, duration: 0.35 }, 0.74);
+        }
+
+        introTl.to(introPanel, {
+          autoAlpha: 1,
+          y: coords.y1 + 16,
+          duration: 0.42,
+          ease: "power2.out",
+        }, 0.9);
+
+        introTl.to(hintLayer, { autoAlpha: 1, duration: 0.28 }, 1.1);
+        introTl.pause(0).render(0);
+        writeDebugSnapshot(0);
+        mark("prepared");
+
+        // === Phase 2: Inversion + collapse + login switch ===
+        stage2Tl = gsap.timeline({ paused: true, defaults: { ease: "power3.inOut" } });
+
+        stage2Tl.to(coords, {
+          ...COLLAPSE_COORDS,
+          duration: 1.02,
+          onUpdate: () => {
+            updateLines(svg, coords);
+            updateClipRect(clipRect, coords);
+            updatePanelFill(panelRect, coords);
+            updatePanelLayout(introPanel, loginPanel, coords);
+            updateLogoPosition(logoGroup, coords);
+          },
+        }, 0);
+
+        if (panelRect) {
+          stage2Tl.to(panelRect, { fill: BRAND_BLUE, duration: 0.54 }, 0.05);
+        }
+        stage2Tl.to(introPanel, { autoAlpha: 0, duration: 0.22 }, 0.12);
+        stage2Tl.to(loginPanel, { autoAlpha: 1, duration: 0.34 }, 0.24);
+        stage2Tl.to(hintLayer, { autoAlpha: 0, duration: 0.18 }, 0.03);
+        if (logoOutline) {
+          stage2Tl.to(logoOutline, { stroke: "#ffffff", duration: 0.45 }, 0.08);
+        }
+        if (logoFill) {
+          stage2Tl.to(logoFill.querySelectorAll("path"), { fill: "#ffffff", duration: 0.45 }, 0.08);
+        }
+        stage2Tl.call(() => setInverted(true), [], 0.06);
+
+        const triggerStage2 = () => {
+          if (!canTriggerRef.current || playedRef.current || !stage2Tl) return;
+          playedRef.current = true;
+          if (reduceMotion) {
+            stage2Tl.progress(1).pause();
+          } else {
+            stage2Tl.play(0);
+          }
+        };
+        const onWheel = (e: WheelEvent) => {
+          if (e.deltaY !== 0) triggerStage2();
+        };
+        const onClick = () => triggerStage2();
+
+        window.addEventListener("wheel", onWheel, { passive: true });
+        window.addEventListener("click", onClick);
+        removeInteractionListeners = () => {
+          window.removeEventListener("wheel", onWheel);
+          window.removeEventListener("click", onClick);
+        };
+
+        removeIntroTicker = () => {
+          if (!introTickerAttached) return;
+          gsap.ticker.remove(onIntroTicker);
+          introTickerAttached = false;
+          introTickerHasTicked = false;
+        };
+
+        const completeIntro = () => {
+          if (introCompleted || !introTl) return;
+          introCompleted = true;
+          removeIntroTicker();
+          introTl.pause(introTl.duration()).render(introTl.duration());
+          writeDebugSnapshot(introTl.duration());
+          canTriggerRef.current = true;
+          mark("completed");
+        };
+
+        const onIntroTicker = (_time: number, deltaTime: number) => {
+          if (disposed || !introTl || introCompleted) {
+            removeIntroTicker();
+            return;
+          }
+          if (document.visibilityState !== "visible") {
+            removeIntroTicker();
+            return;
+          }
+
+          if (!introTickerHasTicked) {
+            introTickerHasTicked = true;
+            introTl.pause(introClockTime).render(introClockTime);
+            writeDebugSnapshot(introClockTime);
+            mark("first-progress");
+            return;
+          }
+
+          const deltaSeconds = Math.min(Math.max(deltaTime, 0), 33) / 1000;
+          introClockTime = Math.min(introClockTime + deltaSeconds, introTl.duration());
+          introTl.time(introClockTime, false);
+          writeDebugSnapshot(introClockTime);
+          if (introClockTime >= introTl.duration()) completeIntro();
+        };
+
+        const startIntroClock = (restart: boolean) => {
+          if (disposed || reduceMotion || !introTl || introCompleted || introTickerAttached) return;
+          introStartScheduled = false;
+          if (restart) introClockTime = 0;
+          introTl.pause(introClockTime).render(introClockTime);
+          introTickerHasTicked = false;
+          introTickerAttached = true;
+          gsap.ticker.add(onIntroTicker);
+          if (restart) mark("started");
+        };
+
+        const scheduleIntroStart = (restart: boolean) => {
+          if (
+            disposed ||
+            reduceMotion ||
+            !introTl ||
+            introCompleted ||
+            introStartScheduled ||
+            introTickerAttached ||
+            document.visibilityState !== "visible"
+          ) return;
+
+          introStartScheduled = true;
+          requestManagedFrame(() => {
+            if (disposed || document.visibilityState !== "visible") {
+              introStartScheduled = false;
+              return;
+            }
+            requestManagedTimeout(() => {
+              if (disposed || document.visibilityState !== "visible") {
+                introStartScheduled = false;
+                return;
+              }
+              startIntroClock(restart);
+            }, 0);
+          });
+        };
+
+        const onVisibilityChange = () => {
+          if (document.visibilityState !== "visible") {
+            removeIntroTicker();
+            return;
+          }
+
+          if (introVisibleReady && !introCompleted) {
+            scheduleIntroStart(false);
+          }
+        };
+
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        const removeVisibilityListener = () => {
+          document.removeEventListener("visibilitychange", onVisibilityChange);
+        };
+
+        if (reduceMotion) {
+          applyIntroEndState();
+          setAnimationReady(true);
+          canTriggerRef.current = true;
+          introCompleted = true;
+          writeDebugSnapshot(introTl.duration());
+          mark("visible");
+        } else {
+          introVisibleReady = true;
+          introTl.pause(0).render(0);
+          setAnimationReady(true);
+          mark("visible");
+          scheduleIntroStart(true);
+        }
+
+        const originalRemoveInteractionListeners = removeInteractionListeners;
+        removeInteractionListeners = () => {
+          originalRemoveInteractionListeners();
+          removeVisibilityListener();
+        };
+      } catch (error) {
+        console.error("[LoginIntroWindow] Failed to initialize intro animation.", error);
+        cancelPendingWork();
+        removeInteractionListeners();
+        try {
+          applyIntroEndState();
+        } catch (fallbackError) {
+          console.error("[LoginIntroWindow] Failed to apply static intro fallback.", fallbackError);
+        }
+        setAnimationReady(true);
+        canTriggerRef.current = true;
+        introCompleted = true;
+        writeDebugSnapshot(introTl?.duration() ?? 0);
+        mark("fallback");
+      }
+    }, page);
 
     return () => {
-      introTl.kill();
-      stage2Tl.kill();
-      window.removeEventListener("wheel", onWheel);
-      window.removeEventListener("click", onClick);
+      disposed = true;
+      cancelPendingWork();
+      removeInteractionListeners();
+      introTl?.kill();
+      stage2Tl?.kill();
+      context.revert();
+      removeIntroTicker();
+      canTriggerRef.current = false;
+      playedRef.current = false;
+      introVisibleReady = false;
+      introStartScheduled = false;
+      setAnimationReady(false);
     };
   }, []);
 
   return (
-    <main className="login-svg-page">
-      <div ref={beamsLayerRef} className="login-beams-layer" aria-hidden="true">
-        <BeamsBackground
-          beamWidth={2.4}
-          beamHeight={17}
-          beamNumber={10}
-          lightColor="#4a68ff"
-          speed={0.85}
-          noiseIntensity={1.05}
-          scale={0.22}
-          rotation={18}
-        />
-      </div>
+    <main
+      ref={pageRef}
+      className="login-svg-page"
+      data-animation-ready={animationReady ? "true" : "false"}
+    >
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VW} ${VH}`}
@@ -231,17 +477,53 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
 
         <rect
           id="panel-fill"
-          x={INTRO_COORDS.x1}
-          y={INTRO_COORDS.y1}
-          width={INTRO_COORDS.x2 - INTRO_COORDS.x1}
-          height={INTRO_COORDS.y2 - INTRO_COORDS.y1}
+          x={(INTRO_COORDS.x1 + INTRO_COORDS.x2) / 2}
+          y={(INTRO_COORDS.y1 + INTRO_COORDS.y2) / 2}
+          width={0}
+          height={0}
           fill="#ffffff"
         />
 
-        <line className="main-line" id="line-left" x1={INTRO_COORDS.x1} y1={0} x2={INTRO_COORDS.x1} y2={VH} stroke={BRAND_BLUE} strokeWidth={PHASE1_STROKE} />
-        <line className="main-line" id="line-right" x1={INTRO_COORDS.x2} y1={0} x2={INTRO_COORDS.x2} y2={VH} stroke={BRAND_BLUE} strokeWidth={PHASE1_STROKE} />
-        <line className="main-line" id="line-top" x1={0} y1={INTRO_COORDS.y1} x2={VW} y2={INTRO_COORDS.y1} stroke={BRAND_BLUE} strokeWidth={PHASE1_STROKE} />
-        <line className="main-line" id="line-bottom" x1={0} y1={INTRO_COORDS.y2} x2={VW} y2={INTRO_COORDS.y2} stroke={BRAND_BLUE} strokeWidth={PHASE1_STROKE} />
+        <line
+          className="main-line"
+          id="line-left"
+          x1={INTRO_COORDS.x1}
+          y1={0}
+          x2={INTRO_COORDS.x1}
+          y2={VH}
+          stroke={BRAND_BLUE}
+          strokeWidth={PHASE1_STROKE}
+        />
+        <line
+          className="main-line"
+          id="line-right"
+          x1={INTRO_COORDS.x2}
+          y1={0}
+          x2={INTRO_COORDS.x2}
+          y2={VH}
+          stroke={BRAND_BLUE}
+          strokeWidth={PHASE1_STROKE}
+        />
+        <line
+          className="main-line"
+          id="line-top"
+          x1={0}
+          y1={INTRO_COORDS.y1}
+          x2={VW}
+          y2={INTRO_COORDS.y1}
+          stroke={BRAND_BLUE}
+          strokeWidth={PHASE1_STROKE}
+        />
+        <line
+          className="main-line"
+          id="line-bottom"
+          x1={0}
+          y1={INTRO_COORDS.y2}
+          x2={VW}
+          y2={INTRO_COORDS.y2}
+          stroke={BRAND_BLUE}
+          strokeWidth={PHASE1_STROKE}
+        />
 
         <g id="logo-group">
           <g id="logo-outline">
@@ -256,7 +538,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
               />
             ))}
           </g>
-          <g id="logo-fill">
+          <g id="logo-fill" fillOpacity={0}>
             {getLogoDiamonds().map((diamond, idx) => (
               <path
                 key={`logo-fill-${idx}`}
@@ -274,6 +556,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
             y={INTRO_COORDS.y1 + 25}
             width={INTRO_COORDS.x2 - INTRO_COORDS.x1 - 24}
             height={INTRO_COORDS.y2 - INTRO_COORDS.y1 - 32}
+            opacity={0}
           >
             <div className={`svg-text-content ${inverted ? "is-inverted" : ""}`}>
               <div className="svg-intro">
@@ -293,6 +576,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
             y={INTRO_COORDS.y1 + 16}
             width={INTRO_COORDS.x2 - INTRO_COORDS.x1 - 32}
             height={INTRO_COORDS.y2 - INTRO_COORDS.y1 - 32}
+            opacity={0}
           >
             <div className="svg-text-content is-inverted">
               {typeof LoginForm === 'function' ? <LoginForm onSignIn={onSignIn} /> : <div>LoginForm load error</div>}
@@ -300,7 +584,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
           </foreignObject>
         </g>
 
-        <g id="hint-layer">
+        <g id="hint-layer" opacity={0}>
           <text
             x={INTRO_COORDS.x2 - 22}
             y={INTRO_COORDS.y2 - 14}
