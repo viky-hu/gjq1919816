@@ -27,6 +27,31 @@
   overflow: hidden;
 }
 
+.macro-window-transition-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: block;
+  width: 100vw;
+  height: 100dvh;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.macro-window-transition-rect {
+  fill: #3152f4;
+  opacity: 1;
+}
+
+.macro-window-page.is-intro-active {
+  overflow: hidden;
+}
+
+.macro-window-page.is-intro-active .macro-window-content-shell,
+.macro-window-page.is-intro-active .global-top-nav {
+  pointer-events: none;
+}
+
 /* SVG 画布 — 全屏 */
 .macro-svg-canvas {
   position: absolute;

@@ -2,6 +2,7 @@
   "extends": "@final/configs/nextjs.json",
   "compilerOptions": {
     "ignoreDeprecations": "6.0",
+    "allowImportingTsExtensions": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]

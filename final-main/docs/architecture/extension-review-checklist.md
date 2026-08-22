@@ -409,6 +409,25 @@
 - 审查结论：通过
 - 审查人：AI
 
+### 2026-08-23 - 登录 handoff 入口与重复蓝线修复
+- 主责文件：
+  - `apps/main-platform/app/login-window-demo.tsx`
+  - `apps/main-platform/app/windows/login/LoginIntroWindow.tsx`
+  - `apps/main-platform/app/windows/macro/MacroWindow.tsx`
+- 协同文件：
+  - `apps/main-platform/app/styles/window-5-macro.css`
+  - `apps/main-platform/app/windows/macro/macro-window-transition.test.mjs`
+- 关键扩展性结论：
+  - 登录窗口是唯一的全屏蓝块收线 owner；目标窗口只接收中线并完成最终落点，避免两个窗口各自初始化一段完整 intro timeline。
+  - 顶层 handoff 状态只携带一次性目标意图，普通宏观到交互对话导航不复用登录转场。
+- 重构动作：
+  - 将默认入口从 `MainWindow` 改为 `MacroWindow`；删除登录路径传入 `MainWindow` 的 introTransition。
+  - 新增宏观页中线接力层，禁止 `transitionFull` 初始帧。
+- 风险与后续：
+  - 登录页与宏观页在 React 窗口切换时通过相同的视口中线完成视觉连续性；若未来改动全局导航高度，应同步更新宏观转场落点。
+- 审查结论：通过（10 项结构/序列回归测试通过）
+- 审查人：AI
+
 ### 2026-08-23 - Window 1 登录 loading 本地预览旁路
 - 主责文件：
   - `apps/main-platform/app/windows/login/login-preview.ts`
@@ -424,4 +443,28 @@
 - 风险与后续：
   - 开发环境空表单会以 `preview-user` 身份进入 loading，预览完成后仍停留在蓝屏；后续恢复真实预览时删除或关闭该模块即可。
 - 审查结论：通过
+- 审查人：AI
+
+### 2026-08-23 - 登录 loading 与主页面蓝线转场
+- 主责文件：
+  - `apps/main-platform/app/windows/login/LoginIntroWindow.tsx`
+  - `apps/main-platform/app/windows/login/LoginSplitLoadingTip.tsx`
+  - `apps/main-platform/app/windows/login/login-loading-session.ts`
+  - `apps/main-platform/app/windows/login/login-loading-tip-sequence.ts`
+  - `apps/main-platform/app/windows/login/login-loading-tips.ts`
+- 协同文件：
+  - `apps/main-platform/app/login-window-demo.tsx`
+  - `apps/main-platform/app/windows/main/MainWindow.tsx`
+  - `apps/main-platform/app/styles/window-1-login.css`
+  - `apps/main-platform/app/styles/window-3-main.css`
+- 关键扩展性结论：
+  - 文案与 enter/hold/exit 时序集中于 sequence；真实后端阶段接入时只替换 sequence 的推进来源，不改 presenter 或窗口边界。
+  - LoginIntroWindow 只负责登录阶段与一次 handoff，MainWindow 只负责自身 intro；session token 保证卸载、重复登录和 stale callback 不会跨窗口泄漏。
+  - loader 动画只使用 transform、opacity、background-color；主页面重型内容仍被蓝色转场层遮挡，转场未完成前不开放交互。
+- 重构动作：
+  - 新增稳定 SplitText presenter，移除 React 文案子节点与 `revertOnUpdate` 依赖；将 9-cell loader 的几何模式集中为 `LOADING_CELL_PATTERN`。
+- 风险与后续：
+  - 当前四句仍为前端 mock，真实阶段事件接入需保留每句 exit 作为推进边界，并补充事件超时/取消策略。
+  - 现有仓库 type-check 仍有既存 server/Prisma 类型错误，与本次窗口改动无关；本次新增模块未引入额外 TypeScript 错误。
+- 审查结论：通过（结构与序列回归已验证）
 - 审查人：AI

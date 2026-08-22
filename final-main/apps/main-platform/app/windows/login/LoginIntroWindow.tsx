@@ -26,12 +26,25 @@ import {
   updateLogoPosition,
 } from "./utils";
 import { LoginForm } from "./LoginForm";
+import { LoginSplitLoadingTip, type LoginSplitLoadingTipPhase } from "./LoginSplitLoadingTip";
+import { createLoginLoadingSessionController } from "./login-loading-session";
+import { createLoginLoadingTipSequence, type LoginLoadingTipPresentation } from "./login-loading-tip-sequence";
+import { LOGIN_LOADING_TIPS } from "./login-loading-tips";
+
+const LOADING_CELL_PATTERN = [0, 1, 2, 1, 2, 2, 3, 3, 4] as const;
+const LOADING_LINE_COORDS = {
+  x1: 0,
+  y1: VH / 2 - 1,
+  x2: VW,
+  y2: VH / 2 + 1,
+};
 
 interface LoginIntroWindowProps {
   onSignIn: (isAdmin: boolean, account: string, nodeType?: string) => void;
+  onLoadingComplete?: () => void;
 }
 
-export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
+export function LoginIntroWindow({ onSignIn, onLoadingComplete }: LoginIntroWindowProps) {
   const pageRef = useRef<HTMLElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const coordsRef = useRef({ ...INTRO_COORDS });
@@ -39,12 +52,29 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
   const playedRef = useRef(false);
   const loadingPlayedRef = useRef(false);
   const loadingTriggerRef = useRef<(() => void) | null>(null);
+  const loadingSessionRef = useRef(createLoginLoadingSessionController());
+  const loadingSequenceRef = useRef(createLoginLoadingTipSequence());
+  const loadingTimersRef = useRef<number[]>([]);
+  const loadingFinishRef = useRef(false);
+  const loadingExitHandlerRef = useRef<() => void>(() => {});
+  const onLoadingCompleteRef = useRef(onLoadingComplete);
   const [inverted, setInverted] = useState(false);
   const [animationReady, setAnimationReady] = useState(false);
+  const [loadingActive, setLoadingActive] = useState(false);
+  const [loadingState, setLoadingState] = useState<"idle" | "blue-complete" | "complete">("idle");
+  const [loadingTip, setLoadingTip] = useState(LOGIN_LOADING_TIPS[0]);
+  const [loadingTipPhase, setLoadingTipPhase] = useState<LoginSplitLoadingTipPhase>("hold");
+
+  onLoadingCompleteRef.current = onLoadingComplete;
 
   const handleSignIn = (isAdmin: boolean, account: string, nodeType?: string) => {
     onSignIn(isAdmin, account, nodeType);
     loadingTriggerRef.current?.();
+  };
+
+  const clearLoadingTimers = () => {
+    loadingTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    loadingTimersRef.current = [];
   };
 
   useEffect(() => {
@@ -70,6 +100,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
     let introTl: gsap.core.Timeline | null = null;
     let stage2Tl: gsap.core.Timeline | null = null;
     let loadingTl: gsap.core.Timeline | null = null;
+    let loadingCollapseTl: gsap.core.Timeline | null = null;
     let introClockTime = 0;
     let introTickerAttached = false;
     let introTickerHasTicked = false;
@@ -147,6 +178,80 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
       if (syncPanelFill) updatePanelFill(panelRect, nextCoords);
       updatePanelLayout(introPanel, loginPanel, nextCoords);
       updateLogoPosition(logoGroup, nextCoords);
+    };
+
+    const scheduleLoadingTimer = (callback: () => void, delay: number) => {
+      const timer = window.setTimeout(() => {
+        loadingTimersRef.current = loadingTimersRef.current.filter((item) => item !== timer);
+        callback();
+      }, delay);
+      loadingTimersRef.current.push(timer);
+    };
+
+    const finishLoading = () => {
+      if (disposed || loadingFinishRef.current) return;
+      loadingFinishRef.current = true;
+      clearLoadingTimers();
+      setLoadingTipPhase("exit");
+      setLoadingActive(false);
+      loadingCollapseTl?.kill();
+      loadingCollapseTl = gsap.timeline({
+        defaults: { ease: "power3.inOut" },
+        onComplete: () => {
+          if (disposed) return;
+          setLoadingState("complete");
+          if (process.env.NODE_ENV !== "production") page.dataset.loadingState = "complete";
+          mark("loading-completed");
+          onLoadingCompleteRef.current?.();
+        },
+      });
+      loadingCollapseTl.to(coords, {
+        ...LOADING_LINE_COORDS,
+        duration: 0.56,
+        onUpdate: () => applyCoords(coords),
+      });
+      if (panelRect) {
+        loadingCollapseTl.to(panelRect, { attr: { y: VH / 2 - 1, height: 2 }, duration: 0.56 }, 0);
+      }
+    };
+
+    const presentLoadingTip = (presentation: LoginLoadingTipPresentation, sessionId: number) => {
+      if (disposed || !loadingSessionRef.current.activateTip(sessionId, presentation.tip.id)) return;
+      setLoadingTip(presentation.tip);
+      setLoadingTipPhase("enter");
+      scheduleLoadingTimer(() => {
+        if (!loadingSessionRef.current.markRevealComplete(sessionId, presentation.tip.id)) return;
+        setLoadingTipPhase("hold");
+        scheduleLoadingTimer(() => {
+          if (loadingSessionRef.current.isRevealComplete(sessionId, presentation.tip.id)) {
+            setLoadingTipPhase("exit");
+          }
+        }, presentation.holdMs);
+      }, presentation.entranceMs);
+    };
+
+    const handleLoadingTipExit = () => {
+      const snapshot = loadingSessionRef.current.getSnapshot();
+      if (disposed || !snapshot.tipId || !loadingSessionRef.current.acceptExit(snapshot.sessionId, snapshot.tipId)) return;
+      const next = loadingSequenceRef.current.advanceAfterExit();
+      if (next.kind === "complete") {
+        finishLoading();
+      } else {
+        presentLoadingTip(next.presentation, snapshot.sessionId);
+      }
+    };
+    loadingExitHandlerRef.current = handleLoadingTipExit;
+
+    const beginLoadingSequence = () => {
+      if (disposed || loadingFinishRef.current) return;
+      clearLoadingTimers();
+      setLoadingActive(true);
+      setLoadingState("blue-complete");
+      if (process.env.NODE_ENV !== "production") page.dataset.loadingState = "blue-complete";
+      const sessionId = loadingSessionRef.current.begin();
+      const first = loadingSequenceRef.current.start();
+      if (first.kind === "tip") presentLoadingTip(first.presentation, sessionId);
+      else finishLoading();
     };
 
     const applyIntroEndState = () => {
@@ -301,12 +406,8 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
           duration: 0.14,
           onUpdate: () => updateLines(svg, loadingLineCoords),
         }, 1.02);
-        loadingTl.call(() => {
-          if (process.env.NODE_ENV !== "production") {
-            page.dataset.loadingState = "complete";
-          }
-          mark("loading-completed");
-        });
+        loadingTl.call(beginLoadingSequence);
+        loadingCollapseTl = null;
 
         const triggerLoading = () => {
           if (!canTriggerRef.current || !playedRef.current || loadingPlayedRef.current || !loadingTl) return;
@@ -478,12 +579,22 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
       introTl?.kill();
       stage2Tl?.kill();
       loadingTl?.kill();
+      loadingCollapseTl?.kill();
+      clearLoadingTimers();
       context.revert();
       removeIntroTicker();
       canTriggerRef.current = false;
       playedRef.current = false;
       loadingPlayedRef.current = false;
       loadingTriggerRef.current = null;
+      loadingExitHandlerRef.current = () => {};
+      loadingFinishRef.current = false;
+      loadingSessionRef.current.begin();
+      loadingSequenceRef.current = createLoginLoadingTipSequence();
+      setLoadingActive(false);
+      setLoadingState("idle");
+      setLoadingTip(LOGIN_LOADING_TIPS[0]);
+      setLoadingTipPhase("hold");
       introVisibleReady = false;
       introStartScheduled = false;
       setAnimationReady(false);
@@ -495,6 +606,7 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
       ref={pageRef}
       className="login-svg-page"
       data-animation-ready={animationReady ? "true" : "false"}
+      data-loading-state={loadingState}
     >
       <svg
         ref={svgRef}
@@ -641,6 +753,29 @@ export function LoginIntroWindow({ onSignIn }: LoginIntroWindowProps) {
           </text>
         </g>
       </svg>
+
+      <div
+        className="login-agent-loading-overlay"
+        data-loading-active={loadingActive ? "true" : "false"}
+        aria-hidden={!loadingActive}
+      >
+        <div className="login-agent-loading-stack">
+          <div className="login-agent-loader" aria-hidden="true">
+            {LOADING_CELL_PATTERN.map((delay, index) => (
+              <div
+                key={`loading-cell-${index}`}
+                className={`login-loading-cell login-loading-cell-d-${delay}`}
+              />
+            ))}
+          </div>
+          <LoginSplitLoadingTip
+            text={loadingTip.text}
+            active={loadingActive}
+            phase={loadingTipPhase}
+            onExitComplete={() => loadingExitHandlerRef.current()}
+          />
+        </div>
+      </div>
     </main>
   );
 }

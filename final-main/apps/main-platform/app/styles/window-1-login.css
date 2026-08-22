@@ -26,6 +26,113 @@
   height: 100%;
 }
 
+/* Loading overlay appears only after the SVG has reached its blue fullscreen state. */
+.login-agent-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  color: rgba(255, 255, 255, 0.96);
+  transition: opacity 220ms ease, visibility 220ms step-end;
+}
+
+.login-agent-loading-overlay[data-loading-active="true"] {
+  visibility: visible;
+  opacity: 1;
+  transition: opacity 220ms ease, visibility 0s step-start;
+}
+
+.login-agent-loading-stack {
+  display: grid;
+  justify-items: center;
+  gap: clamp(18px, 2.2vw, 30px);
+  width: min(92vw, 860px);
+}
+
+.login-agent-loader {
+  --login-loading-cell-size: clamp(22px, 3.2vw, 48px);
+  display: grid;
+  grid-template-columns: repeat(3, var(--login-loading-cell-size));
+  grid-template-rows: repeat(3, var(--login-loading-cell-size));
+  gap: 2px;
+  width: max-content;
+  height: max-content;
+}
+
+.login-loading-cell {
+  width: var(--login-loading-cell-size);
+  height: var(--login-loading-cell-size);
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  border-radius: 2px;
+  background-color: rgba(255, 255, 255, 0.08);
+  opacity: 0.42;
+  transform: scale(1);
+  animation: login-loading-ripple 1.5s ease-in-out infinite;
+  will-change: transform, opacity, background-color;
+}
+
+.login-loading-cell-d-0 { animation-delay: 0ms; }
+.login-loading-cell-d-1 { animation-delay: 100ms; }
+.login-loading-cell-d-2 { animation-delay: 200ms; }
+.login-loading-cell-d-3 { animation-delay: 300ms; }
+.login-loading-cell-d-4 { animation-delay: 400ms; }
+
+@keyframes login-loading-ripple {
+  0%, 100% {
+    opacity: 0.42;
+    transform: scale(0.78);
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1);
+    background-color: rgba(255, 255, 255, 0.92);
+  }
+}
+
+.login-agent-loading-tip {
+  width: min(92vw, 820px);
+  min-height: 1.8em;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.94);
+  font-family: var(--w1-font-family);
+  font-size: clamp(14px, 1.35vw, 20px);
+  font-weight: 500;
+  line-height: 1.8;
+  letter-spacing: 0;
+  text-align: center;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.24);
+  white-space: normal;
+  opacity: 0;
+}
+
+.login-agent-loading-char {
+  display: inline-block;
+  font: inherit;
+  line-height: inherit;
+  color: inherit;
+  text-shadow: inherit;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-agent-loading-overlay,
+  .login-agent-loading-overlay[data-loading-active="true"] {
+    transition: none;
+  }
+
+  .login-loading-cell {
+    animation: none;
+    opacity: 0.82;
+    transform: none;
+  }
+}
+
 .login-svg-page[data-animation-ready="false"] .login-svg-canvas {
   visibility: hidden;
   animation: login-svg-reveal-fallback 1ms step-end 300ms forwards;

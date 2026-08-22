@@ -51,9 +51,16 @@
 - 登录预览开关：`apps/main-platform/app/windows/login/login-preview.ts`
   - 仅开发环境允许空表单直接触发登录成功回调，用于预览登录 loading；生产环境始终保留真实认证校验。
 - 登录成功 loading 编排：`apps/main-platform/app/windows/login/LoginIntroWindow.tsx`
-  - 认证成功后承载 SVG 内容淡出、全屏蓝色色块扩张和四线离屏尾段；最终保持登录窗口挂载，不在本阶段切换到宏观窗口。
+  - 认证成功后承载 SVG 内容淡出、全屏蓝色色块扩张和四线离屏尾段；蓝色全屏完成后挂载 3×3 白色 cell ripple loader，并通过 `LoginSplitLoadingTip` 以稳定 SplitText DOM 逐句播放 mock 阶段文案。
+  - 最后一条文案完成整行淡出后，蓝色色块收成中线并触发一次性主页面 handoff。
+- 登录 loading 模块：`apps/main-platform/app/windows/login/LoginSplitLoadingTip.tsx`、`login-loading-session.ts`、`login-loading-tip-sequence.ts`、`login-loading-tips.ts`
+  - presenter 只操作同一套拆分字符 DOM；session 丢弃 stale callback 与重复 exit；文案与时序集中管理，未来可将 mock sequence 替换为真实阶段事件。
 - 登录窗口顶层状态：`apps/main-platform/app/login-window-demo.tsx`
-  - 登录成功时同步写入运行时身份，仅负责窗口状态与认证状态，不抢先挂载宏观平台。
+- 登录成功时同步写入运行时身份；loading 完成后才切换到宏观平台，并以 `introTransition="from-login-loading"` 传递一次性中线接力意图。
+- 宏观平台 intro：`apps/main-platform/app/windows/macro/MacroWindow.tsx` 与 `window-5-macro.css`
+  - 只负责接收登录窗口已经收成的中线，并将其移动到避开固定导航的内容顶部横线；转场层完成后释放图表和页面交互。
+- 交互对话页：`apps/main-platform/app/windows/main/MainWindow.tsx` 与 `window-3-main.css`
+  - 保留普通导航进入交互对话页的行为，不参与登录 loading handoff，避免重复创建整屏蓝块。
 - 登录 loading 几何契约：`apps/main-platform/app/windows/shared/coords.ts`
   - 提供 `FULLSCREEN_COORDS` 与 `getLineExitCoords`，集中定义全屏终点和线条离屏终点。
 

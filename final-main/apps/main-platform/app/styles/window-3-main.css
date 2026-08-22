@@ -2626,3 +2626,31 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+.main-window-transition-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: block;
+  width: 100vw;
+  height: 100dvh;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.main-window-transition-rect {
+  fill: #3152f4;
+  opacity: 1;
+}
+
+.main-window-page.is-intro-active {
+  overflow: hidden;
+}
+
+.main-window-page.is-intro-active .main-window-content-shell {
+  pointer-events: none;
+}
+
+.main-window-page.is-intro-active .global-top-nav {
+  pointer-events: none;
+}

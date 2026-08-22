@@ -31,6 +31,7 @@ interface MacroWindowProps {
   onNavigateToMain?: () => void;
   onOpenDatabase?: () => void;
   defaultSelectedNodeId?: string;
+  introTransition?: "from-login-loading" | "none";
 }
 
 export function MacroWindow({
@@ -38,10 +39,13 @@ export function MacroWindow({
   onNavigateToMain,
   onOpenDatabase,
   defaultSelectedNodeId,
+  introTransition = "none",
 }: MacroWindowProps) {
   const { username, savedNodeLocation, locationRevision, isSelfCenterNode } = useAppRuntime();
   const svgRef = useRef<SVGSVGElement>(null);
   const modulesRef = useRef<HTMLDivElement>(null);
+  const transitionRectRef = useRef<SVGRectElement>(null);
+  const [introComplete, setIntroComplete] = useState(introTransition !== "from-login-loading");
   const [d1Visible, setD1Visible] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(DEFAULT_ACTIVE_SECTOR_ID);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
@@ -181,8 +185,64 @@ export function MacroWindow({
     return () => { tl.kill(); };
   }, []);
 
+  useLayoutEffect(() => {
+    if (introTransition !== "from-login-loading") {
+      setIntroComplete(true);
+      return;
+    }
+    const rect = transitionRectRef.current;
+    if (!rect) return;
+    let disposed = false;
+    const navHeight = 50;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const lineHeight = reduceMotion ? 3 : 2;
+    const measure = () => ({
+      width: Math.max(window.innerWidth, 1),
+      height: Math.max(window.innerHeight, 1),
+    });
+    const transitionCenter = { x: 0, y: 0, width: 0, height: lineHeight };
+    const transitionFinal = { x: 0, y: navHeight, width: 0, height: lineHeight };
+    const applyCenter = () => {
+      const { width, height } = measure();
+      Object.assign(transitionCenter, { width, y: height / 2 - lineHeight / 2 });
+      gsap.set(rect, { attr: transitionCenter, opacity: 1 });
+    };
+    applyCenter();
+    const { width } = measure();
+    Object.assign(transitionFinal, { width });
+    const tl = gsap.timeline({
+      defaults: { ease: "power3.inOut" },
+      onComplete: () => {
+        if (!disposed) setIntroComplete(true);
+      },
+    });
+    tl.to(rect, { attr: transitionFinal, duration: reduceMotion ? 0 : 0.68 });
+    tl.to(rect, { opacity: 0, duration: reduceMotion ? 0 : 0.18 });
+    const onResize = () => {
+      if (disposed || tl.progress() >= 1) return;
+      const progress = tl.progress();
+      const next = measure();
+      Object.assign(transitionCenter, { width: next.width, y: next.height / 2 - lineHeight / 2 });
+      Object.assign(transitionFinal, { width: next.width });
+      gsap.set(rect, {
+        attr: {
+          x: 0,
+          y: transitionCenter.y + (transitionFinal.y - transitionCenter.y) * progress,
+          width: next.width,
+          height: lineHeight,
+        },
+      });
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      disposed = true;
+      window.removeEventListener("resize", onResize);
+      tl.kill();
+    };
+  }, [introTransition]);
+
   return (
-    <div className="macro-window-page">
+    <div className={`macro-window-page ${introComplete ? "is-intro-complete" : "is-intro-active"}`}>
       <GlobalTopNav
         currentWindow="macro"
         onNavigateToMain={onNavigateToMain}
@@ -283,6 +343,12 @@ export function MacroWindow({
         </div>
 
       </div>
+
+      {introTransition === "from-login-loading" && (
+        <svg className="macro-window-transition-layer" aria-hidden="true">
+          <rect ref={transitionRectRef} className="macro-window-transition-rect" />
+        </svg>
+      )}
     </div>
   );
 }

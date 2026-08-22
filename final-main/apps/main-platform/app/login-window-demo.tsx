@@ -29,6 +29,7 @@ type ActiveWindow = "login" | "main" | "database" | "macro";
 export function LoginWindowDemo() {
   const [activeWindow, setActiveWindow] = useState<ActiveWindow>("login");
   const [loginRenderKey, setLoginRenderKey] = useState(0);
+  const [macroIntroTransition, setMacroIntroTransition] = useState<"from-login-loading" | "none">("none");
   const { watermarkName } = useWatermark();
   const { setIsAdmin, setUsername, setIsSelfCenterNode, resetRuntime } = useAppRuntime();
 
@@ -45,6 +46,7 @@ export function LoginWindowDemo() {
   const handleBackToLogin = () => {
     resetRuntime();
     setActiveWindow("login");
+    setMacroIntroTransition("none");
     // Force re-mount so the intro animation replays from scratch.
     setLoginRenderKey((v) => v + 1);
   };
@@ -56,12 +58,18 @@ export function LoginWindowDemo() {
     setIsSelfCenterNode(nodeType === "center" || isAdmin);
   };
 
+  const handleLoadingComplete = () => {
+    setMacroIntroTransition("from-login-loading");
+    setActiveWindow("macro");
+  };
+
   if (activeWindow === "macro") {
     return renderWithWatermark(
       <MacroWindow
         onBack={handleBackToLogin}
         onNavigateToMain={() => setActiveWindow("main")}
         onOpenDatabase={handleOpenDatabase}
+        introTransition={macroIntroTransition}
       />
     );
   }
@@ -86,5 +94,5 @@ export function LoginWindowDemo() {
     );
   }
 
-  return <LoginIntroWindow key={loginRenderKey} onSignIn={handleSignIn} />;
+  return <LoginIntroWindow key={loginRenderKey} onSignIn={handleSignIn} onLoadingComplete={handleLoadingComplete} />;
 }
