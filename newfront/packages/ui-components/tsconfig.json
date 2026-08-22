@@ -1,8 +1,0 @@
-{
-  "extends": "@final/configs/react-library.json",
-  "compilerOptions": {
-    "ignoreDeprecations": "5.0",
-    "outDir": "dist"
-  },
-  "include": ["src"]
-}
