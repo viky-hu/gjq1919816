@@ -64,14 +64,6 @@ interface NodeConfig {
   sceneY?: number;
 }
 
-interface MockNodeData {
-  v1: string; l1: string;
-  v2: string; l2: string;
-  v3: string; l3: string;
-  code: string;
-  lastSeen: string;
-}
-
 interface Metrics {
   totalFiles: number;
   clusterCount: number;
@@ -122,26 +114,6 @@ function mapPlateToSector(plateId: string | null): string {
   return "node-current";
 }
 
-const BASE_PLATE_NODES: Record<PlateId, NodeConfig[]> = {
-  "plate-1": [
-    { id: "n-center",    name: "中心节点",         isRed: false, isCenter: true, offsetX: 0 },
-    { id: "n-simstreet", name: "大数据教研室",     isRed: false, offsetX: 30 },
-  ],
-  "plate-2": [
-    { id: "n-registrar", name: "党史教育中心",   isRed: false, offsetX: 0 },
-  ],
-  "plate-3": [
-    { id: "n-gym",       name: "马克思理论教研室",   isRed: false, offsetX: 0 },
-  ],
-  "plate-4": [
-    { id: "n-laoshan",       name: "法学教研室", isRed: false, offsetX: -24 },
-  ],
-  "plate-5": [
-    { id: "n-library",  name: "图书馆-红色经典区", isRed: false, isCenter: true, offsetX: -18 },
-    { id: "n-newteach", name: "语言实践中心", isRed: false, offsetX: 18 },
-  ],
-};
-
 function buildPlateNodes(
   selfNodeName: string,
   isSelfCenterNode: boolean,
@@ -150,91 +122,22 @@ function buildPlateNodes(
 ): Record<PlateId, NodeConfig[]> {
   const cleanedName = selfNodeName.trim() || DEFAULT_SELF_NODE_NAME;
 
+  // Build base nodes purely from API data (no hardcoded plate nodes).
   const base = PLATE_IDS.reduce((acc, plateId) => {
-    acc[plateId] = [...BASE_PLATE_NODES[plateId]];
+    acc[plateId] = [];
     return acc;
   }, {} as Record<PlateId, NodeConfig[]>);
 
-  // Track which predefined node IDs exist & sync names from API
-  const predefinedIds = new Set<string>();
-  const apiNameMap: Record<string, string> = {};
-  for (const n of apiNodes) {
-    apiNameMap[n.id] = n.label;
-  }
-  for (const plateId of PLATE_IDS) {
-    for (const node of base[plateId]) {
-      predefinedIds.add(node.id);
-      // Update predefined node names from API data
-      if (apiNameMap[node.id]) {
-        node.name = apiNameMap[node.id];
-      }
-    }
+  if (apiNodes.length === 0) {
+    // No backend data yet — show nothing instead of hardcoded mock nodes.
+    return base;
   }
 
-  // Find the user's home node from API data
-  const homeApiNode = apiNodes.find((n) => n.isHome);
-  const homeApiNodeId = homeApiNode?.id ?? null;
-  const homeApiNodeType = homeApiNode?.nodeType ?? null;
-  if (typeof window !== "undefined") console.log("[D3] buildPlateNodes cleanedName=" + cleanedName + " isSelfCenter=" + isSelfCenterNode + " homeApiNode=" + homeApiNodeId + "(" + homeApiNodeType + ") centers=" + apiNodes.filter(n => n.nodeType === "center").map(n => n.id).join(","));
-
-  // Check if the logged-in user matches a predefined node
-  // Try: name match → API home node id match → admin role matches center node
-  let matchedPlateId: PlateId | null = null;
-  let matchedIndex = -1;
-  for (const plateId of PLATE_IDS) {
-    const nodes = base[plateId];
-    const idx = nodes.findIndex((n) => {
-      if (n.name === cleanedName) return true;
-      if (homeApiNodeId != null && n.id === homeApiNodeId) return true;
-      // Admin user → match the center node
-      if (n.isCenter && isSelfCenterNode) return true;
-      return false;
-    });
-    if (idx !== -1) {
-      matchedPlateId = plateId;
-      matchedIndex = idx;
-      break;
-    }
-  }
-
-  if (matchedPlateId && matchedIndex !== -1) {
-    // User matches a predefined node — mark it as self node and update name
-    base[matchedPlateId][matchedIndex] = {
-      ...base[matchedPlateId][matchedIndex],
-      name: cleanedName,
-      isRed: isSelfCenterNode,
-      isCenter: isSelfCenterNode,
-    };
-  } else {
-    // New user not in predefined list — assign to default plate
-    const targetPlateId = selfNodePlacement?.plateId ?? "plate-4";
-    const selfNode: NodeConfig = selfNodePlacement
-      ? {
-          id: "node-center-red",
-          name: cleanedName,
-          isRed: isSelfCenterNode,
-          isCenter: isSelfCenterNode,
-          offsetX: 0,
-          sceneX: selfNodePlacement.sceneX,
-          sceneY: selfNodePlacement.sceneY,
-        }
-      : {
-          id: "node-center-red",
-          name: cleanedName,
-          isRed: isSelfCenterNode,
-          isCenter: isSelfCenterNode,
-          offsetX: 24,
-        };
-    base[targetPlateId] = [...base[targetPlateId], selfNode];
-  }
-
-  // Add API nodes that aren't already in predefined positions
-  let extraPlateIdx = 0;
-  const extraPlates: PlateId[] = ["plate-1", "plate-2", "plate-3", "plate-4", "plate-5"];
+  // Distribute API nodes across plates in order.
+  let plateIdx = 0;
+  const plates: PlateId[] = ["plate-1", "plate-2", "plate-3", "plate-4", "plate-5"];
   for (const apiNode of apiNodes) {
-    if (predefinedIds.has(apiNode.id)) continue;
-    if (apiNode.isHome) continue; // already handled above
-    const plateId = extraPlates[extraPlateIdx % extraPlates.length];
+    const plateId = plates[plateIdx % plates.length];
     base[plateId].push({
       id: apiNode.id,
       name: apiNode.label,
@@ -242,20 +145,34 @@ function buildPlateNodes(
       isCenter: apiNode.nodeType === "center",
       offsetX: (base[plateId].length % 3 - 1) * 30,
     });
-    extraPlateIdx++;
+    plateIdx++;
+  }
+
+  // Find the user's home node from API data and highlight it as the self node.
+  const homeApiNode = apiNodes.find((n) => n.isHome);
+  const homeApiNodeId = homeApiNode?.id ?? null;
+  if (typeof window !== "undefined") console.log("[D3] buildPlateNodes cleanedName=" + cleanedName + " isSelfCenter=" + isSelfCenterNode + " homeApiNode=" + homeApiNodeId + " centers=" + apiNodes.filter(n => n.nodeType === "center").map(n => n.id).join(","));
+
+  // Mark the matching node as self / red / center.
+  let matched = false;
+  for (const plateId of PLATE_IDS) {
+    for (const node of base[plateId]) {
+      const isHomeMatch = homeApiNodeId != null && node.id === homeApiNodeId;
+      const isNameMatch = node.name === cleanedName;
+      const isCenterSelf = node.isCenter && isSelfCenterNode;
+      if (isHomeMatch || isNameMatch || isCenterSelf) {
+        node.isRed = isSelfCenterNode;
+        node.isCenter = isSelfCenterNode;
+        node.name = cleanedName;
+        matched = true;
+        break;
+      }
+    }
+    if (matched) break;
   }
 
   return base;
 }
-
-const NODE_MOCK: Record<string, MockNodeData> = {
-  "n-simstreet": { v1: "67",     l1: "活跃度%", v2: "3",     l2: "连接数", v3: "7",     l3: "记录总数", code: "BLK-02", lastSeen: "07:22" },
-  "n-registrar": { v1: "59",     l1: "活跃度%", v2: "3",     l2: "连接数", v3: "8",     l3: "记录总数", code: "ADM-02", lastSeen: "09:40" },
-  "n-gym":       { v1: "44",     l1: "活跃度%", v2: "2",     l2: "连接数", v3: "4",     l3: "记录总数", code: "PHY-01", lastSeen: "13:58" },
-  "n-laoshan":   { v1: "78",     l1: "活跃度%", v2: "4",     l2: "连接数", v3: "10",    l3: "记录总数", code: "LSY-01", lastSeen: "04:33" },
-  "n-library":   { v1: "55",     l1: "活跃度%", v2: "2",     l2: "连接数", v3: "5",     l3: "记录总数", code: "LIB-01", lastSeen: "10:27" },
-  "n-newteach":  { v1: "63",     l1: "活跃度%", v2: "4",     l2: "连接数", v3: "9",     l3: "记录总数", code: "EDU-02", lastSeen: "06:15" },
-};
 
 interface PlateGeometryBundle {
   id: PlateId;
@@ -1067,39 +984,16 @@ export function D3SandboxThreeMvp(props: D3SandboxProps) {
       .then((r) => (r.ok ? r.json() : null))
       .then((data: Metrics | null) => {
         if (!active) return;
-        if (data?.totalFiles != null && data.totalFiles > 0) {
-          setTotalFiles(data.totalFiles);
-        } else {
-          setTotalFiles(7); // mock fallback
-        }
+        // 只用后端真实数据：无文件时显示 0
+        setTotalFiles(data?.totalFiles ?? 0);
       })
-      .catch(() => { if (active) setTotalFiles(7); });
+      .catch(() => { if (active) setTotalFiles(0); });
     return () => { active = false; };
   }, [authHeaders, username]);
 
-  // Fetch real node data from macro API (with mock fallback)
+  // Fetch real node data from macro API (no mock fallback)
   useEffect(() => {
     let active = true;
-    const selfName = (props.selfNodeName ?? "").trim();
-    const MOCK_API_NODES = [
-      { id: "n-simstreet", label: "大数据教研室", nodeType: "edge", isHome: selfName === "大数据教研室" },
-      { id: "n-laoshan", label: "法学教研室", nodeType: "edge", isHome: selfName === "法学教研室" },
-      { id: "n-gym", label: "马克思理论教研室", nodeType: "edge", isHome: selfName === "马克思理论教研室" },
-      { id: "n-registrar", label: "党史教育中心", nodeType: "center", isHome: selfName === "党史教育中心" },
-      { id: "n-library", label: "图书馆-红色经典区", nodeType: "edge", isHome: selfName === "图书馆" || selfName === "图书馆-红色经典区" },
-      { id: "n-newteach", label: "语言实践中心", nodeType: "edge", isHome: selfName === "语言实践中心" },
-    ];
-    const MOCK_METRICS: typeof nodeMetrics = {
-      "n-simstreet": { activity: 67, connections: 3, totalRecords: 7, todayUpdates: 2, callCount: 31, uptime: 99.6 },
-      "n-laoshan":   { activity: 78, connections: 4, totalRecords: 10, todayUpdates: 3, callCount: 45, uptime: 99.8 },
-      "n-gym":       { activity: 44, connections: 2, totalRecords: 4, todayUpdates: 1, callCount: 18, uptime: 99.5 },
-      "n-registrar": { activity: 59, connections: 3, totalRecords: 8, todayUpdates: 2, callCount: 38, uptime: 99.9 },
-      "n-library":   { activity: 55, connections: 2, totalRecords: 5, todayUpdates: 1, callCount: 22, uptime: 99.7 },
-      "n-newteach":  { activity: 63, connections: 4, totalRecords: 9, todayUpdates: 2, callCount: 40, uptime: 99.4 },
-    };
-    // Apply mock immediately so UI has data without waiting for backend
-    setNodeMetrics(MOCK_METRICS);
-    setApiNodes(MOCK_API_NODES);
 
     const miaRagUrl = process.env.NEXT_PUBLIC_MIA_RAG_AUTH_URL?.trim();
     if (!miaRagUrl) return;
@@ -1112,34 +1006,36 @@ export function D3SandboxThreeMvp(props: D3SandboxProps) {
         return r.ok ? r.json() : null;
       })
       .then((data: { nodes?: Array<{ id: string; label: string; nodeType: string; isHome: boolean; metrics?: typeof nodeMetrics[string] }> } | null) => {
-        if (!active || !data?.nodes || data.nodes.length === 0) {
-          console.log("[D3] API returned no nodes, keeping mock metrics");
+        if (!active) return;
+        if (!data?.nodes || data.nodes.length === 0) {
+          console.log("[D3] API returned no nodes, clearing metrics");
+          setNodeMetrics({});
+          setApiNodes([]);
           return;
         }
-        console.log("[D3] API nodes:", data.nodes.map(n => ({ id: n.id, hasMetrics: !!n.metrics, callCount: n.metrics?.callCount })));
-        // API returned real data — update nodes, merge metrics (keep mock values as floor)
-        const merged: typeof nodeMetrics = {};
+        // API returned real data — use as-is, no mock floor
+        const metrics: typeof nodeMetrics = {};
         for (const node of data.nodes) {
           if (node.metrics) {
-            merged[node.id] = {
-              activity: Math.max(node.metrics.activity ?? 0, MOCK_METRICS[node.id]?.activity ?? 0),
-              connections: Math.max(node.metrics.connections ?? 0, MOCK_METRICS[node.id]?.connections ?? 0),
-              totalRecords: Math.max(node.metrics.totalRecords ?? 0, MOCK_METRICS[node.id]?.totalRecords ?? 0),
-              todayUpdates: Math.max(node.metrics.todayUpdates ?? 0, MOCK_METRICS[node.id]?.todayUpdates ?? 0),
-              callCount: Math.max(node.metrics.callCount ?? 0, MOCK_METRICS[node.id]?.callCount ?? 0),
-              uptime: Math.max(node.metrics.uptime ?? 0, MOCK_METRICS[node.id]?.uptime ?? 0),
+            metrics[node.id] = {
+              activity: node.metrics.activity ?? 0,
+              connections: node.metrics.connections ?? 0,
+              totalRecords: node.metrics.totalRecords ?? 0,
+              todayUpdates: node.metrics.todayUpdates ?? 0,
+              callCount: node.metrics.callCount ?? 0,
+              uptime: node.metrics.uptime ?? 0,
             };
           }
         }
-        if (Object.keys(merged).length > 0) {
-          console.log("[D3] Merged metrics:", merged);
-          setNodeMetrics(merged);
-        }
-        const mappedNodes = data.nodes.map((n) => ({ id: n.id, label: n.label, nodeType: n.nodeType, isHome: n.isHome }));
-        console.log("[D3] apiNodes: " + mappedNodes.map(n => n.id + "=" + n.nodeType + (n.isHome ? "[HOME]" : "")).join(", "));
-        setApiNodes(mappedNodes);
+        setNodeMetrics(metrics);
+        setApiNodes(data.nodes.map((n) => ({ id: n.id, label: n.label, nodeType: n.nodeType, isHome: n.isHome })));
       })
-      .catch(() => { /* mock already applied, keep it */ });
+      .catch(() => {
+        if (!active) return;
+        console.warn("[D3] /api/macro/nodes failed, clearing data");
+        setNodeMetrics({});
+        setApiNodes([]);
+      });
     return () => { active = false; };
   }, []);
 

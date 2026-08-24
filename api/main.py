@@ -132,6 +132,16 @@ async def lifespan(app: FastAPI):
     manager = MiARAGManager(config=config, base_dir="./mia_rag_storage")
     await manager.initialize(lang="zh")
 
+    # Optional: skip document loading (set SKIP_DOC_LOAD=1 for fast startup / debugging)
+    if os.getenv("SKIP_DOC_LOAD", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("SKIP_DOC_LOAD set — skipping document loading into RAG instances")
+        import api.deps as _deps_skip
+        _deps_skip._rag_manager = manager
+        logger.info("API server ready (docs skipped) ✓")
+        yield
+        await manager.close()
+        return
+
     # Load existing documents into per-user RAG instances
     db = SessionLocal()
     try:

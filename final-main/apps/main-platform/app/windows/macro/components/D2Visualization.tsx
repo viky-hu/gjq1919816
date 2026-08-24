@@ -74,24 +74,15 @@ function D2VisualizationImpl({ visible, selfNodeName }: D2VisualizationProps) {
   }, [visible, period]);
 
   const data = useMemo(() => {
-    if (apiData.length > 0) {
-      const mapped = apiData
-        .map((item) => ({
-          name: item.name === SELF_NODE_PLACEHOLDER ? resolvedSelfNodeName : item.name,
-          value: item.value,
-        }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 5);
-      if (mapped.length > 0) return mapped;
-    }
-    // Fallback when no API data or all values are 0
-    return [
-      { name: resolvedSelfNodeName, value: 14 },
-      { name: "法学教研室", value: 11 },
-      { name: "党史教育中心", value: 8 },
-      { name: "语言实践中心", value: 6 },
-      { name: "图书馆-红色经典区", value: 4 },
-    ];
+    if (apiData.length === 0) return [];
+    // 只用后端真实数据：无查询记录时显示空排行榜
+    return apiData
+      .map((item) => ({
+        name: item.name === SELF_NODE_PLACEHOLDER ? resolvedSelfNodeName : item.name,
+        value: item.value,
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
   }, [apiData, resolvedSelfNodeName]);
 
   const maxVal = data[0]?.value ?? 1;

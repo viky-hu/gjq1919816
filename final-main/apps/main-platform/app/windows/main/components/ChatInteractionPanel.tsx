@@ -1352,7 +1352,7 @@ export function ChatInteractionPanel({
             .catch((error: unknown) => ({ answer: buildFederationErrorReply(error), evidence: null }))
         : askNodeRetrieve(text, ownerAccount, isSelfCenterNode, mode)
             .then((result) => {
-              const evidence: TraceEvidence[] = (result as { evidence?: unknown[] }).evidence
+              const evidence: TraceEvidence[] | null = (result as { evidence?: unknown[] }).evidence
                 ? ((result as { evidence: unknown[] }).evidence as TraceEvidence[])
                 : null;
               return { answer: result.answer, evidence };

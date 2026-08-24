@@ -13,125 +13,6 @@ from ..models import Cluster, ClusterFile, Document, Node, QueryLog, User
 
 router = APIRouter(prefix="/api/macro", tags=["macro"])
 
-# ── Mock fallback data ────────────────────────────────────────────────
-
-_MOCK_NODES = [
-    {"id": "n-simstreet", "label": "大数据教研室", "labelCode": "SECTOR-01", "position": [-8, 0, -8], "isHome": False, "nodeType": "edge"},
-    {"id": "n-laoshan", "label": "法学教研室", "labelCode": "SECTOR-02", "position": [0, 0, -8], "isHome": False, "nodeType": "edge"},
-    {"id": "n-gym", "label": "马克思理论教研室", "labelCode": "SECTOR-03", "position": [8, 0, -8], "isHome": False, "nodeType": "edge"},
-    {"id": "n-registrar", "label": "党史教育中心", "labelCode": "SECTOR-04", "position": [-8, 0, 0], "isHome": False, "nodeType": "center"},
-    {"id": "n-library", "label": "图书馆-红色经典区", "labelCode": "SECTOR-05", "position": [8, 0, 0], "isHome": False, "nodeType": "edge"},
-    {"id": "n-newteach", "label": "语言实践中心", "labelCode": "SECTOR-06", "position": [0, 0, 8], "isHome": True, "nodeType": "edge"},
-]
-
-_MOCK_WORD_CLOUD = [
-    {"text": "数据安全法", "weight": 98},
-    {"text": "个人信息保护", "weight": 92},
-    {"text": "知识图谱", "weight": 88},
-    {"text": "联邦学习", "weight": 85},
-    {"text": "检索增强", "weight": 82},
-    {"text": "自然语言处理", "weight": 78},
-    {"text": "深度学习", "weight": 75},
-    {"text": "多模态", "weight": 72},
-    {"text": "嵌入模型", "weight": 68},
-    {"text": "向量检索", "weight": 65},
-    {"text": "社区检测", "weight": 62},
-    {"text": "置信度聚合", "weight": 58},
-    {"text": "网络安全", "weight": 55},
-    {"text": "分布式架构", "weight": 52},
-    {"text": "边缘计算", "weight": 48},
-    {"text": "图神经网络", "weight": 45},
-    {"text": "注意力机制", "weight": 42},
-    {"text": "语义对齐", "weight": 38},
-    {"text": "跨模态检索", "weight": 35},
-    {"text": "隐私保护", "weight": 32},
-]
-
-
-_MOCK_NODE_METRICS = {
-    "n-simstreet": {"activity": 67, "connections": 3, "totalRecords": 7, "todayUpdates": 2, "callCount": 31, "uptime": 99.6},
-    "n-laoshan":   {"activity": 78, "connections": 4, "totalRecords": 10, "todayUpdates": 3, "callCount": 45, "uptime": 99.8},
-    "n-gym":       {"activity": 44, "connections": 2, "totalRecords": 4, "todayUpdates": 1, "callCount": 18, "uptime": 99.5},
-    "n-registrar": {"activity": 59, "connections": 3, "totalRecords": 8, "todayUpdates": 2, "callCount": 38, "uptime": 99.9},
-    "n-library":   {"activity": 55, "connections": 2, "totalRecords": 5, "todayUpdates": 1, "callCount": 22, "uptime": 99.7},
-    "n-newteach":  {"activity": 63, "connections": 4, "totalRecords": 9, "todayUpdates": 2, "callCount": 40, "uptime": 99.4},
-}
-
-
-def _mock_nodes_response(current_user: User) -> dict:
-    nodes = []
-    for i, m in enumerate(_MOCK_NODES):
-        nodes.append({
-            "id": m["id"],
-            "label": m["label"],
-            "labelCode": m["labelCode"],
-            "position": m["position"],
-            "isHome": m["id"] == (current_user.node_id or "n-newteach"),
-            "nodeType": m["nodeType"],
-            "metrics": _MOCK_NODE_METRICS.get(m["id"], {"activity": 50, "connections": 2, "totalRecords": 5, "todayUpdates": 1, "callCount": 20, "uptime": 99.5}),
-        })
-    return {"nodes": nodes}
-
-
-def _mock_search_frequency(period: str) -> dict:
-    import random
-    random.seed(42)
-    names = ["法学教研室", "大数据教研室", "马克思理论教研室", "党史教育中心", "图书馆-红色经典区"]
-    base = {"today": 5, "week": 15, "month": 40, "quarter": 100, "year": 300}.get(period, 15)
-    rankings = [{"name": n, "value": base + random.randint(0, base)} for n in names]
-    rankings.sort(key=lambda x: -x["value"])
-    return {"period": period, "rankings": rankings[:5]}
-
-
-def _mock_contributions(period: str) -> dict:
-    import random
-    random.seed(42)
-    intervals = 5 if period == "recent" else 7
-    nodes = [
-        ("n-simstreet", "大数据教研室"),
-        ("n-laoshan", "法学教研室"),
-        ("n-registrar", "党史教育中心"),
-    ]
-    result = {}
-    for nid, label in nodes:
-        base = random.randint(20, 60)
-        series = [base + random.randint(-15, 25) for _ in range(intervals)]
-        series = [max(0, v) for v in series]
-        result[nid] = {"label": label, "series": series}
-    return {"period": period, "contributions": result}
-
-
-def _mock_updates() -> dict:
-    now = datetime.now(timezone.utc)
-    records = [
-        ("大数据教研室", "上传了文件《大数据白皮书.pdf》", "file", 0),
-        ("法学教研室", "新建了聚类《民法学》", "cluster", 1),
-        ("马克思理论教研室", "上传了文件《马克思主义基本原理.txt》", "file", 2),
-        ("党史教育中心", "上传了文件《党史学习教育纲要.pdf》", "file", 3),
-        ("图书馆-红色经典区", "新建了聚类《红色经典文献》", "cluster", 4),
-        ("法学教研室", "上传了文件《刑法修正案解读.docx》", "file", 5),
-        ("大数据教研室", "新建了聚类《数据分析方法》", "cluster", 7),
-        ("语言实践中心", "上传了文件《语言学概论.pdf》", "file", 9),
-    ]
-    updates = []
-    for actor, action, typ, days_ago in records:
-        t = now - timedelta(days=days_ago, hours=hours_ago(days_ago))
-        updates.append({
-            "id": f"mock-{typ}-{days_ago}",
-            "actor": actor,
-            "action": action,
-            "type": typ,
-            "createdAt": t.isoformat(),
-        })
-    return {"updates": updates}
-
-
-def hours_ago(seed: int) -> int:
-    import random
-    random.seed(seed + 7)
-    return random.randint(0, 23)
-
-
 # ── Endpoints ─────────────────────────────────────────────────────────
 
 
@@ -198,9 +79,7 @@ def get_macro_nodes(
             },
         })
 
-    if not result:
-        return _mock_nodes_response(current_user)
-
+    # No mock fallback: empty DB means empty nodes list.
     return {"nodes": result}
 
 
@@ -211,11 +90,11 @@ def get_file_count(
 ):
     """Get file count for a user by account name (internal use, no JWT required)."""
     if not account:
-        return {"total_files": 7, "cluster_count": 3}
+        return {"total_files": 0, "cluster_count": 0}
 
     user = db.query(User).filter(User.username == account).first()
     if not user:
-        return {"total_files": 7, "cluster_count": 3}
+        return {"total_files": 0, "cluster_count": 0}
 
     cluster_count = db.query(Cluster).filter(Cluster.user_id == user.id).count()
     cluster_file_count = (
@@ -227,9 +106,7 @@ def get_file_count(
     doc_count = db.query(Document).filter(Document.user_id == user.id).count()
     total_files = cluster_file_count + doc_count
 
-    if total_files == 0:
-        return {"total_files": 7, "cluster_count": 3}
-
+    # No mock fallback: report the true counts (0 when nothing stored).
     return {"total_files": total_files, "cluster_count": cluster_count}
 
 
@@ -279,9 +156,7 @@ def get_search_frequency(
     result.sort(key=lambda x: (-x["value"], x["name"]))
     result = result[:5]
 
-    if not result or all(r["value"] == 0 for r in result):
-        return _mock_search_frequency(period)
-
+    # No mock fallback: empty queries means empty rankings.
     return {"period": period, "rankings": result}
 
 
@@ -362,9 +237,7 @@ def get_node_contributions(
                     "series": series,
                 }
 
-    if not result:
-        return _mock_contributions(period)
-
+    # No mock fallback: empty data means empty contributions.
     return {"period": period, "contributions": result}
 
 
@@ -445,6 +318,7 @@ def get_word_cloud(
     # Sort and build response
     sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:30]
 
+    # No mock fallback: empty graph means empty word cloud.
     if sorted_words:
         max_weight = sorted_words[0][1]
         word_cloud = [
@@ -452,8 +326,7 @@ def get_word_cloud(
             for word, count in sorted_words
         ]
     else:
-        # Mock fallback
-        word_cloud = _MOCK_WORD_CLOUD
+        word_cloud = []
 
     return {"nodeId": node_id, "words": word_cloud}
 
@@ -503,7 +376,5 @@ def get_updates(
     updates.sort(key=lambda x: x["createdAt"], reverse=True)
     updates = updates[:limit]
 
-    if not updates:
-        return _mock_updates()
-
+    # No mock fallback: no clusters/files means empty updates.
     return {"updates": updates}

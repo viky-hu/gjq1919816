@@ -5,7 +5,12 @@ Based on: Mindscape-Aware RAG (arXiv:2512.17220)
 MiA-Emb-8B: fine-tuned on Qwen3-Embedding-8B
 """
 
+import os
 from dataclasses import dataclass
+
+
+def _env(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip()
 
 
 @dataclass
@@ -18,7 +23,7 @@ class MiAConfig:
     node_delimiter: str = "<|repo_name|>"
     """Special token for node-retrieval embedding extraction."""
 
-    # ── Model Paths ──
+    # ── Model Paths (unused in API mode) ──
     model_path: str = "MindscapeRAG/MiA-Emb-8B"
     """HF ID or local path for MiA-EMB (merged model or LoRA adapter)."""
 
@@ -32,17 +37,27 @@ class MiAConfig:
     global_summary_max_tokens: int = 500
     summary_temperature: float = 0.1
 
-    # ── LLM API (DashScope Qwen) ──
-    deepseek_model: str = "qwen-plus"
-    deepseek_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    deepseek_api_key: str = "REDACTED"
+    # ── LLM API (OpenAI-compatible; defaults read from env) ──
+    # base_url / model / api_key come from DEEPSEEK_BASE_URL / DEEPSEEK_MODEL /
+    # DEEPSEEK_API_KEY so both entry points can switch providers without code
+    # changes.  Defaults target DeepSeek official API.
+    deepseek_model: str = _env("DEEPSEEK_MODEL", "deepseek-chat")
+    deepseek_base_url: str = _env("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    deepseek_api_key: str = _env("DEEPSEEK_API_KEY", "")
+
+    # ── Embedding API (DashScope text-embedding-v3) ──
+    # When EMBEDDING_API_KEY is set, ApiEmbedding is used instead of the local
+    # MiA-EMB model; the backend then needs no GPU / model weights.
+    embedding_api_key: str = _env("EMBEDDING_API_KEY", "")
+    embedding_base_url: str = _env("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    embedding_model: str = _env("EMBEDDING_MODEL", "text-embedding-v3")
+    embedding_dim: int = int(_env("EMBEDDING_DIM", "1024"))
 
     # ── Retrieval ──
     top_k_chunks: int = 20
     top_k_nodes: int = 60
 
-    # ── Embedding Dimensions ──
-    embedding_dim: int = 4096
+    # ── Embedding Dimensions (API mode uses embedding_dim above) ──
     max_token_size: int = 4096
 
     @property

@@ -42,57 +42,6 @@ const NODE_CLOUD_KEY_ALIASES: Record<string, string> = {
   "n-library": "node-5",
 };
 
-const NODE_PERIOD_SERIES: Record<string, Record<Period, number[]>> = {
-  "node-current": {
-    "最近": [28, 55, 37, 63, 42],
-    "24小时": [22, 48, 36, 61, 33, 67, 45],
-    "7天内": [31, 58, 44, 69, 41, 73, 52],
-    "30天内": [35, 63, 47, 71, 54, 76, 60],
-  },
-  "node-center-red": {
-    "最近": [72, 88, 74, 92, 79],
-    "24小时": [68, 90, 73, 95, 76, 97, 82],
-    "7天内": [70, 89, 75, 93, 78, 96, 84],
-    "30天内": [73, 91, 77, 94, 81, 98, 86],
-  },
-  "node-2": {
-    "最近": [24, 46, 31, 57, 35],
-    "24小时": [20, 44, 29, 55, 33, 61, 38],
-    "7天内": [27, 49, 34, 58, 37, 63, 42],
-    "30天内": [30, 53, 38, 61, 44, 66, 49],
-  },
-  "node-3": {
-    "最近": [34, 67, 41, 74, 46],
-    "24小时": [29, 62, 37, 78, 43, 82, 51],
-    "7天内": [36, 69, 45, 76, 52, 81, 58],
-    "30天内": [40, 72, 49, 79, 56, 84, 63],
-  },
-  "node-4": {
-    "最近": [52, 38, 59, 35, 63],
-    "24小时": [55, 36, 61, 33, 66, 39, 70],
-    "7天内": [58, 41, 64, 37, 69, 44, 73],
-    "30天内": [60, 45, 67, 40, 72, 48, 76],
-  },
-  "node-5": {
-    "最近": [18, 39, 24, 46, 29],
-    "24小时": [15, 36, 22, 49, 27, 53, 33],
-    "7天内": [20, 41, 26, 52, 31, 57, 37],
-    "30天内": [24, 45, 30, 56, 35, 61, 42],
-  },
-  "n-simstreet": {
-    "最近": [38, 72, 45, 81, 53],
-    "24小时": [31, 69, 42, 84, 48, 89, 57],
-    "7天内": [36, 74, 47, 86, 54, 91, 61],
-    "30天内": [41, 77, 52, 88, 59, 93, 66],
-  },
-  "n-newteach": {
-    "最近": [26, 49, 33, 58, 39],
-    "24小时": [23, 46, 31, 61, 37, 66, 44],
-    "7天内": [28, 52, 36, 64, 42, 69, 49],
-    "30天内": [33, 56, 41, 67, 47, 72, 54],
-  },
-};
-
 function buildValueDomain(values: number[]): { min: number; max: number; ticks: [number, number, number] } {
   if (!values.length) {
     return { min: 0, max: 100, ticks: [100, 50, 0] };
@@ -293,8 +242,7 @@ export function D4Visualization({ visible, activeSectorId, selectedNodeId, selfN
 
   const resolveSeriesNodeId = useCallback((nodeId: string | null | undefined): string => {
     if (!nodeId) return "node-current";
-    const resolved = NODE_SERIES_ALIASES[nodeId] ?? nodeId;
-    return NODE_PERIOD_SERIES[resolved] ? resolved : "node-current";
+    return NODE_SERIES_ALIASES[nodeId] ?? nodeId;
   }, []);
 
   const [displayNodeId, setDisplayNodeId] = useState<string>(() =>
@@ -380,27 +328,14 @@ export function D4Visualization({ visible, activeSectorId, selectedNodeId, selfN
     };
   }, [visible]);
 
-  // 1. Use real API data, fallback to NODE_PERIOD_SERIES mock
+  // 1. Use real API data only; no mock fallback (empty => empty chart)
   const data: DataPoint[] = useMemo(() => {
+    if (!apiContributions) return [];
+    const entry = apiContributions[resolvedNodeSeriesId] ?? apiContributions[displayNodeId];
+    if (!entry || entry.series.length === 0) return [];
     const now = new Date();
-
-    if (apiContributions) {
-      const entry = apiContributions[resolvedNodeSeriesId] ?? apiContributions[displayNodeId];
-      if (entry && entry.series.length > 0) {
-        const labels = buildTimeLabels(period, entry.series.length, now);
-        return entry.series.map((value, index) => ({
-          value,
-          time: labels[index] ?? `${index + 1}`,
-        }));
-      }
-    }
-
-    // Mock fallback: use NODE_PERIOD_SERIES
-    const mockSeries = NODE_PERIOD_SERIES[resolvedNodeSeriesId]?.[period]
-      ?? NODE_PERIOD_SERIES["node-current"]?.[period]
-      ?? [28, 55, 37, 63, 42];
-    const labels = buildTimeLabels(period, mockSeries.length, now);
-    return mockSeries.map((value, index) => ({
+    const labels = buildTimeLabels(period, entry.series.length, now);
+    return entry.series.map((value, index) => ({
       value,
       time: labels[index] ?? `${index + 1}`,
     }));

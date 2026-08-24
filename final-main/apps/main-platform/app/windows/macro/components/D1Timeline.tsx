@@ -9,16 +9,6 @@ import { buildNodeAuthContext, createNodeAuthHeaders } from "@/app/lib/client/no
 /* ── 轮询间隔 ── */
 const POLL_MS = 4000;
 
-/* ── Mock 更新数据 ── */
-const MOCK_UPDATES: DatabaseUpdate[] = [
-  { id: "mock-1", time: "14:30", date: "2026.6.8", actor: "大数据教研室", action: "上传了文件《大数据白皮书.pdf》", type: "file", timestamp: Date.now() - 3600000 * 2 },
-  { id: "mock-2", time: "11:15", date: "2026.6.7", actor: "法学教研室", action: "新建了聚类《民法学》", type: "cluster", timestamp: Date.now() - 86400000 },
-  { id: "mock-3", time: "09:42", date: "2026.6.7", actor: "马克思理论教研室", action: "上传了文件《马克思主义基本原理.txt》", type: "file", timestamp: Date.now() - 86400000 - 3600000 * 3 },
-  { id: "mock-4", time: "16:20", date: "2026.6.6", actor: "党史教育中心", action: "上传了文件《党史学习教育纲要.pdf》", type: "file", timestamp: Date.now() - 86400000 * 2 },
-  { id: "mock-5", time: "10:05", date: "2026.6.5", actor: "图书馆-红色经典区", action: "新建了聚类《红色经典文献》", type: "cluster", timestamp: Date.now() - 86400000 * 3 },
-  { id: "mock-6", time: "08:55", date: "2026.6.4", actor: "法学教研室", action: "上传了文件《刑法修正案解读.docx》", type: "file", timestamp: Date.now() - 86400000 * 4 },
-];
-
 interface D1TimelineProps {
   /** 为 true 时开始渲染内部内容（由父组件在画布完全展开后传入） */
   visible: boolean;
@@ -58,7 +48,8 @@ export function D1Timeline({ visible }: D1TimelineProps) {
         return;
       }
       const data = await res.json() as { updates: DatabaseUpdate[] };
-      setUpdates(data.updates.length > 0 ? data.updates : MOCK_UPDATES);
+      // 只用后端真实数据：为空时显示空时间线，不回退到 mock
+      setUpdates(data.updates ?? []);
       setFetchError(null);
     } catch {
       setFetchError("网络错误，请稍后重试");

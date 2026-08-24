@@ -97,16 +97,10 @@ function ensureTrailingEllipsis(text: string): string {
   return `${trimmed}……`;
 }
 
-/** Mock source file names when backend returns unknown_source */
-const MOCK_SOURCE_NAMES = [
-  "民法典", "刑法学", "刑事诉讼法学", "数据安全法", "个人信息保护法",
-  "网络安全法", "法学导论", "宪法学", "行政法与行政诉讼法学", "经济法学",
-  "国际法学", "知识产权法", "劳动法与社会保障法", "环境与资源保护法学",
-];
-
 function resolveSourceName(source: string, index: number): string {
+  // 只用后端真实来源；缺失时如实显示占位，不伪造来源文件名
   if (source && source !== "unknown_source" && source !== "未知来源") return source;
-  return MOCK_SOURCE_NAMES[index % MOCK_SOURCE_NAMES.length];
+  return "未知来源";
 }
 
 function buildDatasetFromEvidence(evidence: TraceEvidence[]): TraceDataset {

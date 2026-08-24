@@ -6,8 +6,6 @@ import { coerceClientError } from "../../shared/error-utils";
 
 const VIS_SCRIPT_SRC = "/trace/lib/vis-9.1.2/vis-network.min.js";
 const VIS_STYLE_HREF = "/trace/lib/vis-9.1.2/vis-network.css";
-const MANIFEST_SRC = "/trace/trace-knowledge-graph-manifest.json";
-const FALLBACK_DATA_SRC = "/trace/trace-knowledge-graph-reduced.json";
 
 const TRACE_NODE_COLOR_PALETTE = [
   "#FEFD99",  // 人/组织/实体 暖黄
@@ -178,16 +176,6 @@ function loadVisScript(): Promise<void> {
   return visScriptPromise;
 }
 
-async function fetchGraphManifest(): Promise<TraceGraphManifest | null> {
-  try {
-    const res = await fetch(MANIFEST_SRC, { cache: "no-store" });
-    if (!res.ok) return null;
-    return (await res.json()) as TraceGraphManifest;
-  } catch {
-    return null;
-  }
-}
-
 async function fetchGraphDataFromApi(account: string): Promise<TraceGraphPayload | null> {
   const params = new URLSearchParams();
   if (account) params.set("account", account);
@@ -200,29 +188,13 @@ async function fetchGraphDataFromApi(account: string): Promise<TraceGraphPayload
   return (await response.json()) as TraceGraphPayload;
 }
 
-async function fetchGraphDataFromManifest(): Promise<TraceGraphPayload | null> {
-  const manifest = await fetchGraphManifest();
-  const dataUrl = manifest?.activeDataUrl ?? FALLBACK_DATA_SRC;
-
-  const response = await fetch(dataUrl, { cache: "no-store" });
-  if (!response.ok) return null;
-  return (await response.json()) as TraceGraphPayload;
-}
-
 async function fetchGraphData(account: string): Promise<TraceGraphPayload> {
-  // 1. 优先拉取真实后端数据
+  // 只用真实后端数据；无数据时返回空图谱，不回退到静态 mock 文件
   const apiData = await fetchGraphDataFromApi(account);
   if (apiData && apiData.nodes && apiData.nodes.length > 0) {
     return apiData;
   }
-
-  // 2. 若 manifest 提供 activeDataUrl 则用之，否则回退精简 JSON
-  const manifestData = await fetchGraphDataFromManifest();
-  if (manifestData && manifestData.nodes && manifestData.nodes.length > 0) {
-    return manifestData;
-  }
-
-  throw new Error("图谱数据加载失败：后端 API 与本地 fallback 均不可用");
+  return { meta: { sourceNodeCount: 0, sourceEdgeCount: 0, keptNodeCount: 0, keptEdgeCount: 0, centerRoots: [] }, nodes: [], edges: [] };
 }
 
 export interface TraceKnowledgeGraphProps {

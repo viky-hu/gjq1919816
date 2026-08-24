@@ -20,13 +20,35 @@ import tempfile
 from typing import Optional
 
 import numpy as np
-import torch
-import torch.nn.functional as F
-from transformers import AutoModel, AutoTokenizer
 
 from .mia_config import MiAConfig
 
 logger = logging.getLogger("mia_emb")
+
+# Optional API-mode embedding.  torch/transformers are only required for the
+# local-model path; in API mode they may be absent, which is fine because the
+# API branch never touches them.
+_api_embedding = None
+
+try:
+    import torch
+    import torch.nn.functional as F
+    from transformers import AutoModel, AutoTokenizer
+except Exception:  # pragma: no cover - API-only environments may lack torch
+    torch = None
+    F = None
+    AutoModel = None
+    AutoTokenizer = None
+
+
+def _get_api_embedding():
+    """Lazily import the API embedding (avoids importing torch on API-only runs)."""
+    global _api_embedding
+    if _api_embedding is None:
+        from .api_embedding import ApiEmbedding
+
+        _api_embedding = ApiEmbedding
+    return _api_embedding
 
 
 def _get_gpu_memory_gb() -> float:
@@ -122,6 +144,17 @@ class MiAEmbedding:
         device: Optional[str] = None,
     ):
         self.config = config
+        self._api = None  # ApiEmbedding instance when in API mode
+        # Decide mode up front: if an embedding API key is configured, we use
+        # the external API (no GPU / weights needed); otherwise local model.
+        self._use_api = bool(getattr(config, "embedding_api_key", ""))
+        if self._use_api:
+            self.device = "api"
+            self._model = None
+            self._tokenizer = None
+            self._loaded = False
+            self._load_mode = "api"
+            return
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
@@ -138,11 +171,19 @@ class MiAEmbedding:
         model_path: Optional[str] = None,
         base_model_path: Optional[str] = None,
     ):
-        """Load MiA-EMB model, auto-detecting merged vs LoRA-only.
+        """Load embedding engine.
 
-        Merged model:  AutoModel.from_pretrained() loads directly.
-        LoRA adapter: base Qwen3-Emb-8B + LoRA -> merge_and_unload().
+        API mode: delegates to ApiEmbedding (DashScope text-embedding-v3);
+        no model weights or GPU required.
+        Local mode: loads MiA-EMB model, auto-detecting merged vs LoRA-only.
         """
+        if self._use_api:
+            api_cls = _get_api_embedding()
+            self._api = api_cls(self.config)
+            self._api.load()
+            self._loaded = True
+            self._load_mode = "api"
+            return
         path = model_path or self.config.model_path
         base_path = base_model_path or self.config.base_model_path
 
@@ -305,6 +346,8 @@ class MiAEmbedding:
         """
         if not self._loaded:
             raise RuntimeError("Model not loaded. Call .load() first.")
+        if self._api is not None:
+            return self._api.encode_queries(queries, mindscape=mindscape, residual=residual, mode=mode)
 
         embeddings = []
         for query in queries:
@@ -328,6 +371,8 @@ class MiAEmbedding:
         """
         if not self._loaded:
             raise RuntimeError("Model not loaded. Call .load() first.")
+        if self._api is not None:
+            return self._api.encode_queries(queries, mindscape=mindscape, residual=residual, mode=mode), None
 
         mains, resids = [], []
         for query in queries:
@@ -349,6 +394,8 @@ class MiAEmbedding:
         """Encode document chunks with standard last-token pooling."""
         if not self._loaded:
             raise RuntimeError("Model not loaded. Call .load() first.")
+        if self._api is not None:
+            return self._api.encode_documents(documents, batch_size=batch_size)
         if not documents:
             return np.array([])
 

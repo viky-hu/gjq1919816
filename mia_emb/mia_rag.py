@@ -845,13 +845,24 @@ class MiARAG:
 
             for attempt in range(3):
                 try:
-                    response = await client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        temperature=0.3,
-                        max_tokens=max_tok,
+                    # Hard timeout guard: never let a single LLM call hang the
+                    # pipeline indefinitely (API can stall without raising).
+                    response = await asyncio.wait_for(
+                        client.chat.completions.create(
+                            model=model,
+                            messages=messages,
+                            temperature=0.3,
+                            max_tokens=max_tok,
+                        ),
+                        timeout=150.0,
                     )
                     return response.choices[0].message.content
+                except asyncio.TimeoutError:
+                    if attempt < 2:
+                        logger.warning(f"LLM attempt {attempt + 1} timed out, retrying...")
+                        await asyncio.sleep(2 ** attempt)
+                    else:
+                        raise
                 except (APITimeoutError, APIConnectionError) as e:
                     if attempt < 2:
                         wait = 2 ** attempt
