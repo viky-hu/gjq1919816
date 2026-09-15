@@ -15,7 +15,7 @@
  *   - 第五窗口（宏观平台）:   ./windows/macro/MacroWindow
  */
 
-import { useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { useAppRuntime } from "./components/runtime/AppRuntimeProvider";
 import { LoginIntroWindow } from "./windows/login/LoginIntroWindow";
 import { MainWindow } from "./windows/main/MainWindow";
@@ -40,13 +40,25 @@ export function LoginWindowDemo() {
     </>
   );
 
-  const handleOpenDatabase = () => setActiveWindow("database");
-  const handleOpenMacro = () => setActiveWindow("macro");
+  const handleNavigate = (nextWindow: ActiveWindow) => {
+    if (activeWindow === "macro" && nextWindow !== "macro") {
+      setMacroIntroTransition("none");
+    }
+    setActiveWindow(nextWindow);
+  };
+
+  const handleOpenMain = () => handleNavigate("main");
+  const handleOpenDatabase = () => handleNavigate("database");
+  const handleOpenMacro = () => handleNavigate("macro");
+
+  const handleIntroTransitionComplete = useCallback(() => {
+    setMacroIntroTransition("none");
+  }, []);
 
   const handleBackToLogin = () => {
     resetRuntime();
-    setActiveWindow("login");
     setMacroIntroTransition("none");
+    setActiveWindow("login");
     // Force re-mount so the intro animation replays from scratch.
     setLoginRenderKey((v) => v + 1);
   };
@@ -67,9 +79,10 @@ export function LoginWindowDemo() {
     return renderWithWatermark(
       <MacroWindow
         onBack={handleBackToLogin}
-        onNavigateToMain={() => setActiveWindow("main")}
+        onNavigateToMain={handleOpenMain}
         onOpenDatabase={handleOpenDatabase}
         introTransition={macroIntroTransition}
+        onIntroTransitionComplete={handleIntroTransitionComplete}
       />
     );
   }
@@ -78,7 +91,7 @@ export function LoginWindowDemo() {
     return renderWithWatermark(
       <DatabaseWindow
         onBack={handleBackToLogin}
-        onNavigateToMain={() => setActiveWindow("main")}
+        onNavigateToMain={handleOpenMain}
         onOpenMacro={handleOpenMacro}
       />
     );

@@ -30,6 +30,7 @@ interface MacroWindowProps {
   onBack?: () => void;
   onNavigateToMain?: () => void;
   onOpenDatabase?: () => void;
+  onIntroTransitionComplete?: () => void;
   defaultSelectedNodeId?: string;
   introTransition?: "from-login-loading" | "none";
 }
@@ -38,6 +39,7 @@ export function MacroWindow({
   onBack,
   onNavigateToMain,
   onOpenDatabase,
+  onIntroTransitionComplete,
   defaultSelectedNodeId,
   introTransition = "none",
 }: MacroWindowProps) {
@@ -213,7 +215,10 @@ export function MacroWindow({
     const tl = gsap.timeline({
       defaults: { ease: "power3.inOut" },
       onComplete: () => {
-        if (!disposed) setIntroComplete(true);
+        if (!disposed) {
+          setIntroComplete(true);
+          onIntroTransitionComplete?.();
+        }
       },
     });
     tl.to(rect, { attr: transitionFinal, duration: reduceMotion ? 0 : 0.68 });
@@ -239,7 +244,7 @@ export function MacroWindow({
       window.removeEventListener("resize", onResize);
       tl.kill();
     };
-  }, [introTransition]);
+  }, [introTransition, onIntroTransitionComplete]);
 
   return (
     <div className={`macro-window-page ${introComplete ? "is-intro-complete" : "is-intro-active"}`}>
