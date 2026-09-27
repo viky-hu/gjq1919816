@@ -13,8 +13,14 @@ function Write-Section([string]$Text) {
 }
 
 function Test-Import([string]$PythonExe, [string]$ModuleName) {
-    & $PythonExe -c "import $ModuleName" 2>$null
-    return $LASTEXITCODE -eq 0
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $PythonExe -c "import $ModuleName" *> $null
+        return $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
 }
 
 function Test-ListeningPort([int]$Port) {
@@ -71,6 +77,7 @@ $FrontendRoot = Join-Path $Root "final-main"
 $FrontendApp = Join-Path $FrontendRoot "apps\main-platform"
 $Requirements = Join-Path $Root "requirements.txt"
 $LocalEnv = Join-Path $Root "backend.local.env"
+$LocalEnvExample = Join-Path $Root "backend.local.env.example"
 $FrontendEnv = Join-Path $FrontendApp ".env.local"
 
 Write-Section "Locate project"
@@ -86,7 +93,21 @@ if (-not (Test-Path -LiteralPath (Join-Path $FrontendRoot "package.json"))) {
     throw "final-main/package.json was not found beside this launcher."
 }
 
-Read-LocalEnv $LocalEnv
+if (Test-Path -LiteralPath $LocalEnv) {
+    Write-Host "Backend configuration: $LocalEnv"
+    Read-LocalEnv $LocalEnv
+} else {
+    Write-Host "Backend configuration file not found: $LocalEnv" -ForegroundColor Yellow
+    if (Test-Path -LiteralPath $LocalEnvExample) {
+        Write-Host "Copy this template, then fill the values before the next run: $LocalEnvExample" -ForegroundColor Yellow
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY) -or $env:DEEPSEEK_API_KEY -eq "REDACTED") {
+    Write-Host "DEEPSEEK_API_KEY is not configured. Add your key on the DEEPSEEK_API_KEY= line in:" -ForegroundColor Yellow
+    Write-Host "  $LocalEnv" -ForegroundColor Yellow
+    Write-Host "The services can start, but LLM summarization and answer generation will fail until this key is set." -ForegroundColor Yellow
+}
 
 $PythonCommand = Get-Command python.exe -ErrorAction SilentlyContinue
 if (-not $PythonCommand) {
