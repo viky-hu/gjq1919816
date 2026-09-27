@@ -133,6 +133,12 @@ async def lifespan(app: FastAPI):
     dk = os.getenv("DEEPSEEK_API_KEY", "")
     if dk:
         config_kwargs["deepseek_api_key"] = dk
+    deepseek_base_url = os.getenv("DEEPSEEK_BASE_URL", "")
+    if deepseek_base_url:
+        config_kwargs["deepseek_base_url"] = deepseek_base_url
+    deepseek_model = os.getenv("DEEPSEEK_MODEL", "")
+    if deepseek_model:
+        config_kwargs["deepseek_model"] = deepseek_model
     config = MiAConfig(**config_kwargs)
     from api.database import Base, SessionLocal, engine as db_engine
     Base.metadata.create_all(bind=db_engine)

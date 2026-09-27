@@ -34,6 +34,8 @@ logger = logging.getLogger("api")
 MODEL_PATH = os.getenv("MODEL_PATH", "MindscapeRAG/MiA-Emb-8B")
 BASE_MODEL_PATH = os.getenv("BASE_MODEL_PATH", "Qwen/Qwen3-Embedding-8B")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "")
 STATIC_DIR = Path("./uploads")
 
 
@@ -127,6 +129,10 @@ async def lifespan(app: FastAPI):
     cfg_kwargs: dict = dict(model_path=MODEL_PATH, base_model_path=BASE_MODEL_PATH)
     if DEEPSEEK_API_KEY:
         cfg_kwargs["deepseek_api_key"] = DEEPSEEK_API_KEY
+    if DEEPSEEK_BASE_URL:
+        cfg_kwargs["deepseek_base_url"] = DEEPSEEK_BASE_URL
+    if DEEPSEEK_MODEL:
+        cfg_kwargs["deepseek_model"] = DEEPSEEK_MODEL
     config = MiAConfig(**cfg_kwargs)
 
     manager = MiARAGManager(config=config, base_dir="./mia_rag_storage")
