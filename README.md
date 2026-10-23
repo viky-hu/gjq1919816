@@ -261,7 +261,7 @@ Windows 下把 `set -a; source .env; set +a` 换成在 `start.ps1` 中同样的�
 | `DATABASE_URL` | PostgreSQL 连接串（Prisma） |
 | `CHAT_HISTORY_STORAGE_MODE` | `prisma` / `auto` / `mock` |
 | `FEDERATION_CENTRAL_BASE_URL` | 中心聚合服务地址，默认 `http://127.0.0.1:9000` |
-| `MIA_RAG_NODE_URL` | 节点服务地址，默认 `http://127.0.0.1:6008` |
+| `MIA_RAG_NODE_URL` | 主 API 地址，默认 `http://127.0.0.1:6006`（BFF 的 `/api/query/internal`、`/api/sm4/*`、`/api/graph` 等路由走这里；6008 的节点服务只供中心聚合调用） |
 | `NEXT_PUBLIC_MIA_RAG_AUTH_URL` | 主 API 地址，默认 `http://127.0.0.1:6006` |
 | `FEDERATION_INTERNAL_TOKEN` | 必须与后端一致 |
 | `FEDERATION_SM4_KEY` | 必须与后端一致 |
