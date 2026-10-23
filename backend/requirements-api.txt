@@ -1,0 +1,44 @@
+# ============================================================
+#  API 模式依赖（无需 GPU、无需本地模型权重）
+#  安装：pip install -r backend/requirements-api.txt
+#  另外需要安装 vendored LightRAG 及其依赖：
+#        pip install -e backend/LightRAG
+# ============================================================
+
+# Web / API
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+pydantic
+
+# 鉴权
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0
+
+# 数据库
+sqlalchemy>=1.4.0,<3.0
+
+# LLM / Embedding API
+openai>=1.0.0
+httpx
+numpy
+tiktoken
+
+# 工具
+python-dotenv
+jieba
+
+# 图算法（粗粒度检索通道）
+networkx>=3.0
+python-louvain>=0.16
+
+# 国密（联邦链路）
+sm4
+gmssl
+
+# 多模态文档处理
+PyMuPDF>=1.24.0
+Pillow>=10.0.0
+pytesseract>=0.3.10
+opencv-python-headless>=4.8.0
