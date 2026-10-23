@@ -1,42 +1,53 @@
-# Python
+# ── Python ────────────────────────────────────────────────
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
 *.egg-info/
-dist/
-build/
-.eggs/
-
-# Virtual env
-venv/
 .venv/
+venv/
 env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# IDE
-.vscode/
-.idea/
-.claude/
-
-# Data & models (太大不传)
-mia_rag_storage/
-models/**/*.bin
-models/**/*.safetensors
-*.whl
-
-# Secrets
+# ── 环境变量与密钥（只提交 .env.example）──────────────────
 .env
+.env.*
+!.env.example
 *.key
-backend.local.env
+*.pem
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Uploads & logs
-uploads/
-audit_logs/
+# ── 运行时数据（不提交数据库、上传文件和向量库）──────────
+backend/mia_rag_storage/
+backend/uploads/
+backend/audit_logs/
 *.db
 *.sqlite
+*.sqlite3
+logs/
+.logs/
+*.log
 
-# Vendored LightRAG fork (external dependency, installed via pip install lightrag-hku)
-LightRAG/
+# ── 模型权重（API 版本不需要；本地模型请单独放置）─────────
+backend/models/
+models/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.whl
+
+# ── 前端依赖与构建产物 ───────────────────────────────────
+frontend/node_modules/
+frontend/.turbo/
+frontend/apps/*/node_modules/
+frontend/apps/*/.next/
+frontend/apps/*/out/
+frontend/apps/*/.env.local
+frontend/apps/*/.env
+
+# ── 编辑器与系统文件 ─────────────────────────────────────
+.idea/
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
